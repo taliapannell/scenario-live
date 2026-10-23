@@ -1,0 +1,30 @@
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32em;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+  white-space: nowrap;
+}
+
+.bracket {
+  color: #a100ff;
+}
+
+.text {
+  color: #111827;
+}
+
+@media (prefers-color-scheme: dark) {
+  .text {
+    color: #e8e8f0;
+  }
+}
+
+:global([data-theme='dark']) .text {
+  color: #e8e8f0;
+}

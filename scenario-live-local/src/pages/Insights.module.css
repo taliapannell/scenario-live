@@ -1,0 +1,169 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--bg);
+}
+
+.main {
+  flex: 1;
+  padding: 2rem 1rem;
+  margin-top: 4rem;
+}
+
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  margin-bottom: 2rem;
+  transition: all var(--transition);
+}
+
+.backLink:hover {
+  color: var(--purple);
+}
+
+.header {
+  margin-bottom: 2rem;
+}
+
+.pills {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.pill {
+  display: inline-block;
+  padding: 0.375rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.header h1 {
+  margin: 0;
+}
+
+.summaryCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--purple);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.summaryCard p {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.topicsSection {
+  margin-bottom: 3rem;
+}
+
+.topicsSection h2 {
+  margin-bottom: 1.5rem;
+}
+
+.topicsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.5rem;
+}
+
+.topicCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  transition: all var(--transition);
+}
+
+.topicCard:hover {
+  border-color: var(--border-hover);
+  transform: translateY(-2px);
+}
+
+.topicDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-bottom: 0.75rem;
+}
+
+.topicCard h3 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.topicCard p {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.cta {
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.ctaButton {
+  display: inline-block;
+  padding: 1rem 2rem;
+  background: var(--purple);
+  color: #fff;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 1rem;
+  transition: all var(--transition);
+}
+
+.ctaButton:hover {
+  background: var(--purple-dim);
+  transform: translateY(-2px);
+}
+
+@media (max-width: 640px) {
+  .main {
+    padding: 1rem;
+    margin-top: 3rem;
+  }
+
+  .header {
+    margin-bottom: 1.5rem;
+  }
+
+  .summaryCard {
+    padding: 1rem;
+  }
+
+  .summaryCard p {
+    font-size: 0.9375rem;
+  }
+
+  .topicsGrid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .topicCard {
+    padding: 1rem;
+  }
+
+  .ctaButton {
+    width: 100%;
+  }
+}

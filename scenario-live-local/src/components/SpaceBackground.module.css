@@ -1,0 +1,50 @@
+.container {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.star {
+  position: absolute;
+  border-radius: 50%;
+  background: #ffffff;
+  animation: twinkle linear infinite;
+}
+
+[data-theme='dark'] .star {
+  background: #ffffff;
+}
+
+:root:not([data-theme='dark']) .star {
+  background: #6b6b8a;
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: inherit; transform: scale(1); }
+  50%       { opacity: 0.05;   transform: scale(0.6); }
+}
+
+.shootingStar {
+  position: absolute;
+  width: 120px;
+  height: 1.5px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.7), transparent);
+  opacity: 0;
+  animation: shoot linear infinite;
+  transform: rotate(30deg);
+  transform-origin: left center;
+}
+
+:root:not([data-theme='dark']) .shootingStar {
+  background: linear-gradient(90deg, rgba(100, 80, 160, 0.6), transparent);
+}
+
+@keyframes shoot {
+  0%   { opacity: 0;   transform: rotate(30deg) translateX(0); }
+  5%   { opacity: 0.6; }
+  30%  { opacity: 0;   transform: rotate(30deg) translateX(300px); }
+  100% { opacity: 0;   transform: rotate(30deg) translateX(300px); }
+}

@@ -1,0 +1,6 @@
+Audio scene files are intentionally not committed because of their size.
+
+Local copy:
+C:\Users\User\Desktop\makers-lab-audio-local
+
+Copy the audio files into audio/scenes/ when running the project locally.

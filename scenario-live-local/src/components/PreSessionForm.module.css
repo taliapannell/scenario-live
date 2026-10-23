@@ -1,0 +1,95 @@
+.container,
+.success {
+  width: min(100%, 620px);
+  margin: 0 auto;
+  padding: clamp(1.5rem, 5vw, 4rem);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.08);
+}
+
+.intro { margin-bottom: 2rem; }
+
+.eyebrow {
+  margin-bottom: 0.75rem;
+  color: var(--purple);
+  font-family: 'Space Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.intro h1,
+.success h2 {
+  margin-bottom: 0.65rem;
+  color: var(--text-primary);
+  font-size: clamp(1.75rem, 5vw, 2.5rem);
+  line-height: 1.1;
+}
+
+.intro > p:last-child,
+.successCopy { color: var(--text-secondary); }
+
+.form { display: grid; gap: 1.25rem; }
+
+.field { display: grid; gap: 0.5rem; }
+
+.field label {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.field label span { color: var(--text-tertiary); font-weight: 400; }
+
+.field input,
+.field textarea {
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  resize: vertical;
+}
+
+.field input::placeholder,
+.field textarea::placeholder { color: var(--text-tertiary); }
+
+.field input:focus,
+.field textarea:focus {
+  border-color: var(--purple);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--purple-glow);
+}
+
+.error { margin: 0; color: #c62828; font-size: 0.875rem; }
+
+.submit {
+  padding: 0.95rem 1.25rem;
+  border-radius: 8px;
+  background: var(--purple);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.submit:hover:not(:disabled) { background: var(--purple-dim); transform: translateY(-1px); }
+.submit:disabled { cursor: wait; opacity: 0.65; }
+
+.success { text-align: center; }
+
+.successMark {
+  display: inline-grid;
+  width: 3rem;
+  height: 3rem;
+  margin-bottom: 1.25rem;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--purple-glow);
+  color: var(--purple);
+  font-size: 1.75rem;
+}
