@@ -1,0 +1,80 @@
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background: rgba(14, 8, 26, 0.35);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+[data-theme='light'] .header {
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+}
+
+:root {
+  --bg-rgb: 250, 250, 250;
+}
+
+[data-theme='dark'] {
+  --bg-rgb: 8, 8, 8;
+}
+
+.accentureLogo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  flex-shrink: 0;
+  margin-left: 0.75rem;
+}
+
+.logoLink {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
+  transition: opacity var(--transition);
+  flex-shrink: 0;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-45%);
+}
+
+.logoLink:hover {
+  opacity: 0.8;
+}
+
+.logoLink:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.rightControls {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+@media (max-width: 640px) {
+  .header {
+    padding: 0.75rem;
+  }
+
+  .accentureLogo {
+    width: 32px;
+    height: 32px;
+  }
+
+  .logoLink {
+    transform: translateX(-50%) scale(0.9);
+    transform-origin: center;
+  }
+}
