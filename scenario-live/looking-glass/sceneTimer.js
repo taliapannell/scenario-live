@@ -9,7 +9,7 @@
 // =============================================================================
 
 import { callClaude, getCurrentConversationContext } from './nova-chat.js'
-import { triggerSceneShift } from '../shared/session-state.js'
+import { onEnvironmentUpdate } from '../shared/environment-bridge.js'
 
 let autoShiftTimer = null
 let cooldownActive = false
@@ -66,7 +66,7 @@ function activateCooldown() {
 
 async function fireSceneShift(prompt) {
   const scenePrompt = prompt ?? await generateContextualShift()
-  triggerSceneShift(scenePrompt)
+  await onEnvironmentUpdate({ scenePrompt, audioPrompt: null, mode: 'conversation' })
   notifySceneShiftOccurred()
 }
 

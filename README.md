@@ -36,6 +36,9 @@ Create a `.env` file in `looking-glass/` (gitignored — never commit it):
 VITE_ANTHROPIC_API_KEY=sk-ant-...   # required for Nova to talk (Claude API)
 VITE_NOVA_SPEAKER=                  # optional: substring of the dedicated TTS speaker's label
 VITE_SCENT_URL=http://localhost:5011  # optional: scent bridge (see below); unset = scent is logged only
+VITE_STREAM_DIFFUSION_URL=http://<stream-diffusion-host>:<port>/prompt
+VITE_SONOS_URL=http://<sonos-http-api-host>:<port>
+VITE_SONOS_ROOM=Immersive Experience Room
 ```
 
 Vite only reads `.env` at server start, so **restart Vite after changing it**.

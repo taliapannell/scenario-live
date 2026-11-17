@@ -5,7 +5,7 @@
 //   node nova-parser-test.mjs
 //
 // All mock responses are modelled on realistic Claude outputs for the new
-// 6-tag system prompt. Covers: entity detected, generic greeting (empty entity),
+// 7-tag system prompt. Covers: entity detected, generic greeting (empty entity),
 // missing/malformed tags, multi-line notes stripping, and scent slot matching.
 // -----------------------------------------------------------------------------
 
@@ -24,13 +24,15 @@ function extractStructuredResponse(reply) {
   const scenePrompt = get('scene_prompt')
   const audioPrompt = get('audio_prompt')
   const scentPrompt = get('scent_prompt')
+  const modeRaw = get('mode').toLowerCase()
+  const mode = modeRaw === 'dream' ? 'dream' : 'conversation'
   const notesRaw    = get('notes')
   const notes = notesRaw
     .split('\n')
     .map(l => l.replace(/^[-•]\s*/, '').trim())
     .filter(Boolean)
 
-  return { spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
+  return { spoken, entity, scenePrompt, audioPrompt, scentPrompt, mode, notes }
 }
 
 // ── Test harness ─────────────────────────────────────────────────────────────
@@ -65,6 +67,8 @@ const MOCK_ENTITY = `
 <audio_prompt>The ambient hum of a busy tech campus — keyboards typing, quiet overlapping conversation, distant mechanical ventilation, the subtle chime of a desktop notification.</audio_prompt>
 
 <scent_prompt>Fresh coffee, warm electronics, cool air-conditioned office</scent_prompt>
+
+<mode>dream</mode>
 
 <notes>
 - Google has invested over $30 billion in AI research through DeepMind and Google Brain
@@ -121,6 +125,7 @@ console.log('\n═══ T1: Entity detected (Google) ═══')
   assert('scenePrompt is NOT the default fallback', r.scenePrompt, v => v !== DEFAULT_SCENE)
   assert('audioPrompt non-empty', r.audioPrompt, v => v.length > 0)
   assert('scentPrompt non-empty', r.scentPrompt, v => v.length > 0)
+  assert('mode is dream', r.mode, 'dream')
   assert('notes has 3 items',     r.notes.length, 3)
   assert('notes[0] has no leading dash', r.notes[0], v => !v.startsWith('-'))
 }
@@ -145,6 +150,7 @@ console.log('\n═══ T3: Missing tags (graceful degradation) ═══')
   assert('scenePrompt is empty string', r.scenePrompt, '')
   assert('audioPrompt is empty string', r.audioPrompt, '')
   assert('scentPrompt is empty string', r.scentPrompt, '')
+  assert('missing mode defaults to conversation', r.mode, 'conversation')
   assert('missing scent falls back to default slot', matchScentScene(r.scentPrompt), 'slot_6')
   assert('notes is empty array',        r.notes.length, 0)
 }

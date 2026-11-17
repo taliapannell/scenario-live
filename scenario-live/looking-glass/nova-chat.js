@@ -27,6 +27,7 @@ import {
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import { resetSession, onEntityDetected } from "../shared/session-state.js";
+import { onEnvironmentUpdate } from "../shared/environment-bridge.js";
 // -----------------------------------------------------------------------------
 // CONFIG
 // -----------------------------------------------------------------------------
@@ -107,7 +108,7 @@ If you feel the urge to explain more, resist it — ask instead.
 The question at the end should feel natural, not forced. It should come from genuine curiosity about the client's situation.
 These rules apply to every single response Nova gives, regardless of topic, regardless of complexity. If the answer genuinely requires more than 3 sentences, break it into two turns — answer part of it, ask a question, and let the client's response open the door to the rest.
 
-After every reply, you MUST return the following six XML tags on their own lines at the very end of your response, in exactly this order:
+After every reply, you MUST return the following seven XML tags on their own lines at the very end of your response, in exactly this order:
 
 <reply>Your spoken response to the visitor — 3 sentences or fewer, always ending with a question.</reply>
 
@@ -118,6 +119,8 @@ After every reply, you MUST return the following six XML tags on their own lines
 <audio_prompt>One sentence describing the sonic environment that matches the scene. Used to select a pre-sourced audio file — do not describe music, only ambient sound.</audio_prompt>
 
 <scent_prompt>A short comma-separated list of the scents in the scene (e.g. "Rain-dampened concrete, exhaust, street food"). Used to select a scent cartridge — describe smells only, nothing else.</scent_prompt>
+
+<mode>Use conversation for normal room shifts. Use dream when the visitor explicitly requests a dream-like, fantastical, or imagined environment. Otherwise return conversation.</mode>
 
 <notes>
 - A relevant fact or insight about the detected entity
@@ -380,7 +383,7 @@ export async function callClaude(customMessages) {
 // -----------------------------------------------------------------------------
 // STRUCTURED RESPONSE PARSING
 // -----------------------------------------------------------------------------
-// Extracts all 6 XML tags from Nova's reply. Returns the spoken text plus the
+// Extracts all 7 XML tags from Nova's reply. Returns the spoken text plus the
 // entity/scene/audio/scent/notes fields for downstream scene, audio, and whiteboard use.
 function extractStructuredResponse(reply) {
   const get = (tag) => {
@@ -393,13 +396,15 @@ function extractStructuredResponse(reply) {
   const scenePrompt = get('scene_prompt')
   const audioPrompt = get('audio_prompt')
   const scentPrompt = get('scent_prompt')
+  const modeRaw = get('mode').toLowerCase()
+  const mode = modeRaw === 'dream' ? 'dream' : 'conversation'
   const notesRaw    = get('notes')
   const notes = notesRaw
     .split('\n')
     .map(l => l.replace(/^[-•]\s*/, '').trim())
     .filter(Boolean)
 
-  return { spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
+  return { spoken, entity, scenePrompt, audioPrompt, scentPrompt, mode, notes }
 }
 
 // Trims Nova's spoken reply to 3 sentences max and warns when the model drifts.
@@ -443,16 +448,19 @@ export async function sendToNova(text, { force = false } = {}) {
 
   try {
     const reply = await callClaude();
+    const responseArrivedAt = performance.now();
     messages.push({ role: 'assistant', content: reply });
 
-    const { spoken: rawSpoken, entity, scenePrompt, audioPrompt, scentPrompt, notes } = extractStructuredResponse(reply);
+    const { spoken: rawSpoken, entity, scenePrompt, audioPrompt, scentPrompt, mode, notes } = extractStructuredResponse(reply);
     const spoken = enforceResponseStyle(rawSpoken);
+
+    void onEnvironmentUpdate({ scenePrompt, audioPrompt, mode, responseArrivedAt });
 
     if (entity) {
       const entityType = COMPANY_NAMES.some(n => entity.toLowerCase().includes(n)) ? 'company' : 'keyword';
       onEntityDetected(entity, entityType, scenePrompt, audioPrompt, scentPrompt);
       _onEntity?.({ entity, scenePrompt, audioPrompt, scentPrompt, notes });
-      _onSceneShift?.(scenePrompt); // first keyword: immediate shift; subsequent: timer reset
+      _onSceneShift?.(scenePrompt); // reset or notify the scene timer
 
       // Shift Nova's visual color to match a recognised topic keyword.
       const topicKey = TOPIC_MAP[entity.toLowerCase()];

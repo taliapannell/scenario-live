@@ -22,8 +22,7 @@ function createStreamDiffusion() {
     triggerScene(prompt) {
       request = request
         .catch(() => {})
-        .then(() => sendPrompt(prompt))
-        .catch((error) => console.error("Could not trigger StreamDiffusion:", error));
+        .then(() => sendPrompt(prompt));
       return request;
     },
   };
