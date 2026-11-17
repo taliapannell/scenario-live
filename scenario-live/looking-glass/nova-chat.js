@@ -26,7 +26,7 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
-import { resetSession, onEntityDetected } from "../shared/session-state.js";
+import { resetSession, onEntityDetected, onDreamDetected } from "../shared/session-state.js";
 // -----------------------------------------------------------------------------
 // CONFIG
 // -----------------------------------------------------------------------------
@@ -105,9 +105,23 @@ Every response must end with a question directed at the client.
 Never lecture. Never list. Never give a paragraph when a sentence will do.
 If you feel the urge to explain more, resist it — ask instead.
 The question at the end should feel natural, not forced. It should come from genuine curiosity about the client's situation.
-These rules apply to every single response Nova gives, regardless of topic, regardless of complexity. If the answer genuinely requires more than 3 sentences, break it into two turns — answer part of it, ask a question, and let the client's response open the door to the rest.
+These rules apply to every conversation-mode response Nova gives, regardless of topic, regardless of complexity. If the answer genuinely requires more than 3 sentences, break it into two turns — answer part of it, ask a question, and let the client's response open the door to the rest. Dream mode (below) has its own reply rule.
 
-After every reply, you MUST return the following six XML tags on their own lines at the very end of your response, in exactly this order:
+DREAM MODE: If the person describes something they imagine or want to see
+(e.g. "I'm dreaming of..."), set <mode>dream</mode>.
+In dream mode:
+- Their description is the scene. Keep every element they named; do not swap,
+  drop, or reinterpret subjects.
+- Add only visual craft: lighting, style, atmosphere, camera. Dreamlike, cinematic.
+- Keep <reply> to one short line, then stop. Leave <entity> empty.
+- If they ask to change a dream ("add...", "make it..."), modify the previous
+  <scene_prompt> instead of rewriting it.
+- If the request is inappropriate, redirect to a safe, whimsical version.
+Otherwise set <mode>conversation</mode> and behave as normal.
+
+After every reply, you MUST return the following seven XML tags on their own lines at the very end of your response, in exactly this order:
+
+<mode>Either "conversation" or "dream".</mode>
 
 <reply>Your spoken response to the visitor — 3 sentences or fewer, always ending with a question.</reply>
 
@@ -199,6 +213,8 @@ export function getCurrentConversationContext() {
 // Called by main.js to wire scene-shift notifications without a circular import
 let _onSceneShift = null
 export function setSceneShiftCallback(fn) { _onSceneShift = fn }
+let _onDreamShift = null
+export function setDreamShiftCallback(fn) { _onDreamShift = fn }
 
 // Expose for dev-console use (so devs can test without pressing the button).
 if (typeof window !== 'undefined') {
@@ -380,14 +396,16 @@ export async function callClaude(customMessages) {
 // -----------------------------------------------------------------------------
 // STRUCTURED RESPONSE PARSING
 // -----------------------------------------------------------------------------
-// Extracts all 6 XML tags from Nova's reply. Returns the spoken text plus the
+// Extracts all 7 XML tags from Nova's reply. Returns the mode and spoken text plus the
 // entity/scene/audio/scent/notes fields for downstream scene, audio, and whiteboard use.
+// A missing or unrecognised <mode> falls back to 'conversation'.
 function extractStructuredResponse(reply) {
   const get = (tag) => {
     const match = reply.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'))
     return match ? match[1].trim() : ''
   }
 
+  const mode        = get('mode').toLowerCase() === 'dream' ? 'dream' : 'conversation'
   const spoken      = get('reply')
   const entity      = get('entity')
   const scenePrompt = get('scene_prompt')
@@ -399,7 +417,22 @@ function extractStructuredResponse(reply) {
     .map(l => l.replace(/^[-•]\s*/, '').trim())
     .filter(Boolean)
 
-  return { spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
+  return { mode, spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
+}
+
+// Dream replies are "one short line" — the example line is two short sentences,
+// so cap at 2 and don't expect a closing question.
+function enforceDreamReplyStyle(response) {
+  const sentences = response
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0)
+
+  if (sentences.length > 2) {
+    console.warn('[nova-chat] Dream reply exceeded one short line — trimming:', response)
+    return sentences.slice(0, 2).join(' ')
+  }
+  return response
 }
 
 // Trims Nova's spoken reply to 3 sentences max and warns when the model drifts.
@@ -445,10 +478,16 @@ export async function sendToNova(text, { force = false } = {}) {
     const reply = await callClaude();
     messages.push({ role: 'assistant', content: reply });
 
-    const { spoken: rawSpoken, entity, scenePrompt, audioPrompt, scentPrompt, notes } = extractStructuredResponse(reply);
-    const spoken = enforceResponseStyle(rawSpoken);
+    const { mode, spoken: rawSpoken, entity, scenePrompt, audioPrompt, scentPrompt, notes } = extractStructuredResponse(reply);
+    const spoken = mode === 'dream' ? enforceDreamReplyStyle(rawSpoken) : enforceResponseStyle(rawSpoken);
 
-    if (entity) {
+    if (mode === 'dream') {
+      // Dreams bypass the entity lock and shift cap — see onDreamDetected.
+      if (scenePrompt) {
+        onDreamDetected(scenePrompt, audioPrompt, scentPrompt);
+        _onDreamShift?.(); // resets the auto-shift timer so it doesn't paint over the dream
+      }
+    } else if (entity) {
       const entityType = COMPANY_NAMES.some(n => entity.toLowerCase().includes(n)) ? 'company' : 'keyword';
       onEntityDetected(entity, entityType, scenePrompt, audioPrompt, scentPrompt);
       _onEntity?.({ entity, scenePrompt, audioPrompt, scentPrompt, notes });

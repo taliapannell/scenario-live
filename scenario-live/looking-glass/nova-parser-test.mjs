@@ -19,6 +19,7 @@ function extractStructuredResponse(reply) {
     return match ? match[1].trim() : ''
   }
 
+  const mode        = get('mode').toLowerCase() === 'dream' ? 'dream' : 'conversation'
   const spoken      = get('reply')
   const entity      = get('entity')
   const scenePrompt = get('scene_prompt')
@@ -30,7 +31,7 @@ function extractStructuredResponse(reply) {
     .map(l => l.replace(/^[-•]\s*/, '').trim())
     .filter(Boolean)
 
-  return { spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
+  return { mode, spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
 }
 
 // ── Test harness ─────────────────────────────────────────────────────────────
@@ -110,6 +111,15 @@ const MOCK_BULLET_VARIANTS = `
 </notes>
 `.trim()
 
+const MOCK_DREAM = `
+<mode>dream</mode>
+<reply>Flying cars chasing a rainbow. Let's see it.</reply>
+<entity></entity>
+<scene_prompt>sleek flying cars soaring through a bright sky toward a vivid full rainbow, golden hour light, soft clouds, cinematic wide shot, dreamlike, highly detailed</scene_prompt>
+<audio_prompt>airy, shimmering ambient pads with soft wind, wonder and lift</audio_prompt>
+<notes>dream: flying cars + rainbow</notes>
+`.trim()
+
 // ── TEST SUITE ────────────────────────────────────────────────────────────────
 
 console.log('\n═══ T1: Entity detected (Google) ═══')
@@ -183,6 +193,21 @@ console.log('\n═══ T6: Entity takes priority over scent description ══
   assert('entity "healthcare" beats city scent text', matchScentScene('healthcare', 'Rain on pavement'), 'slot_2')
   assert('unmatched entity falls back to scent text', matchScentScene('Google', 'Ozone and cool server air'), 'slot_3')
   assert('nothing matches → slot_6', matchScentScene('Google', 'Fresh coffee, cool air'), 'slot_6')
+}
+
+console.log('\n═══ T7: Dream Mode <mode> tag ═══')
+{
+  const r = extractStructuredResponse(MOCK_DREAM)
+  assert('mode is "dream"',              r.mode, 'dream')
+  assert('entity is empty',              r.entity, '')
+  assert('scenePrompt keeps flying cars', r.scenePrompt, v => v.includes('flying cars'))
+  assert('scenePrompt keeps rainbow',     r.scenePrompt, v => v.includes('rainbow'))
+  assert('missing scent_prompt → empty',  r.scentPrompt, '')
+  assert('uppercase DREAM → dream',       extractStructuredResponse('<mode> DREAM </mode>').mode, 'dream')
+  assert('explicit conversation',         extractStructuredResponse('<mode>conversation</mode>').mode, 'conversation')
+  assert('missing mode → conversation',   extractStructuredResponse(MOCK_ENTITY).mode, 'conversation')
+  assert('invalid mode → conversation',   extractStructuredResponse('<mode>nightmare</mode>').mode, 'conversation')
+  assert('no tags at all → conversation', extractStructuredResponse(MOCK_MISSING_TAGS).mode, 'conversation')
 }
 
 console.log(`\n──────────────`)

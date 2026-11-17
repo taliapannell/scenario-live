@@ -19,7 +19,7 @@
 // =============================================================================
 
 import * as THREE from "three";
-import { initNovaChat, sendToNova, enableBedrock, disableBedrock, resetMessages, handleEndOfSession, setSceneShiftCallback } from "./nova-chat.js";
+import { initNovaChat, sendToNova, enableBedrock, disableBedrock, resetMessages, handleEndOfSession, setSceneShiftCallback, setDreamShiftCallback } from "./nova-chat.js";
 import { resetSceneTimer, notifySceneShiftOccurred, onFirstKeywordDetected } from "./sceneTimer.js";
 import { initHoldToTalk, resetHoldToTalk } from "./hold-to-talk.js";
 import { tryEnableHoloPlay } from "./holoplay-display.js";
@@ -761,6 +761,7 @@ initNovaChat({
   },
 });
 setSceneShiftCallback(onFirstKeywordDetected);
+setDreamShiftCallback(notifySceneShiftOccurred);
 
 initHoldToTalk({
   onLiveTranscript: (text) => {
