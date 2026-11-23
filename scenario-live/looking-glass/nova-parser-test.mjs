@@ -20,6 +20,7 @@ function extractStructuredResponse(reply) {
   }
 
   const mode        = get('mode').toLowerCase() === 'dream' ? 'dream' : 'conversation'
+  const dreamEdit   = mode === 'dream' && get('dream_edit').toLowerCase() === 'yes'
   const spoken      = get('reply')
   const entity      = get('entity')
   const scenePrompt = get('scene_prompt')
@@ -31,7 +32,7 @@ function extractStructuredResponse(reply) {
     .map(l => l.replace(/^[-•]\s*/, '').trim())
     .filter(Boolean)
 
-  return { mode, spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
+  return { mode, dreamEdit, spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
 }
 
 // ── Test harness ─────────────────────────────────────────────────────────────
@@ -208,6 +209,16 @@ console.log('\n═══ T7: Dream Mode <mode> tag ═══')
   assert('missing mode → conversation',   extractStructuredResponse(MOCK_ENTITY).mode, 'conversation')
   assert('invalid mode → conversation',   extractStructuredResponse('<mode>nightmare</mode>').mode, 'conversation')
   assert('no tags at all → conversation', extractStructuredResponse(MOCK_MISSING_TAGS).mode, 'conversation')
+}
+
+console.log('\n═══ T8: <dream_edit> tag ═══')
+{
+  const edit = '<mode>dream</mode>\n<dream_edit>yes</dream_edit>\n<scene_prompt>flying cars, rainbow, night sky</scene_prompt>'
+  assert('dream + yes → edit',               extractStructuredResponse(edit).dreamEdit, true)
+  assert('dream + no → new dream',           extractStructuredResponse('<mode>dream</mode><dream_edit>no</dream_edit>').dreamEdit, false)
+  assert('dream + missing tag → new dream',  extractStructuredResponse(MOCK_DREAM).dreamEdit, false)
+  assert('dream + garbage → new dream',      extractStructuredResponse('<mode>dream</mode><dream_edit>maybe</dream_edit>').dreamEdit, false)
+  assert('conversation + yes → not an edit', extractStructuredResponse('<mode>conversation</mode><dream_edit>yes</dream_edit>').dreamEdit, false)
 }
 
 console.log(`\n──────────────`)

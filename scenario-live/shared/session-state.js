@@ -50,6 +50,7 @@ function onEntityDetected(entity, entityType, scenePrompt, audioPrompt, scentPro
             sceneHandlers.playAudio?.(audioPrompt);
             sceneHandlers.releaseScent?.(scentPrompt, entity);
             sessionState.shiftCount++;
+            clearDream();
         }
         // If already company-locked, silently ignore
     } else if (entityType === "keyword") {
@@ -60,9 +61,17 @@ function onEntityDetected(entity, entityType, scenePrompt, audioPrompt, scentPro
             sceneHandlers.playAudio?.(audioPrompt);
             sceneHandlers.releaseScent?.(scentPrompt, entity);
             sessionState.shiftCount++;
+            clearDream();
         }
         // Otherwise silently ignore
     }
+}
+
+// Called whenever a non-dream scene replaces the walls, so Claude isn't told an old
+// dream is still showing and the next "edit" starts fresh.
+function clearDream() {
+    sessionState.dreamScenePrompt = null;
+    sessionState.dreamSeed = null;
 }
 
 function newDreamSeed() {
@@ -73,21 +82,24 @@ function newDreamSeed() {
 // entity lock and does NOT count toward maxShifts; dreams are uncapped.
 // isEdit keeps the current seed so an edit ("make it nighttime") morphs the scene
 // instead of jumping to a new image; a brand-new dream gets a new seed.
+// Returns whatever triggerScene returns (the StreamDiffusion request) for timing.
 function onDreamDetected(scenePrompt, audioPrompt, scentPrompt, { isEdit = false } = {}) {
     if (!scenePrompt) return;
-    if (!isEdit || sessionState.dreamSeed === null) {
+    if (!isEdit || sessionState.dreamScenePrompt === null) {
         sessionState.dreamSeed = newDreamSeed();
     }
     sessionState.dreamScenePrompt = scenePrompt;
     setCurrentScene(scenePrompt, audioPrompt, scentPrompt);
-    sceneHandlers.triggerScene?.(scenePrompt, { seed: sessionState.dreamSeed });
+    const sceneRequest = sceneHandlers.triggerScene?.(scenePrompt, { seed: sessionState.dreamSeed });
     sceneHandlers.playAudio?.(audioPrompt);
     sceneHandlers.releaseScent?.(scentPrompt, null);
+    return sceneRequest;
 }
 
 // Direct scene shift used by sceneTimer — bypasses entity-lock and shift cap
 // so the room stays alive regardless of whether keywords are still being detected
 function triggerSceneShift(scenePrompt) {
+  clearDream()
   sceneHandlers.triggerScene?.(scenePrompt)
   const audioFile = defaultScene.audioFile ?? defaultScene.audioPrompt
   if (audioFile) sceneHandlers.playAudio?.(audioFile)
@@ -100,8 +112,7 @@ function resetSession() {
     sessionState.currentAudioPrompt = defaultScene.audioPrompt;
     sessionState.currentScentPrompt = null;
     sessionState.shiftCount = 0;
-    sessionState.dreamScenePrompt = null;
-    sessionState.dreamSeed = null;
+    clearDream();
     sceneHandlers.resetScene?.();
     sceneHandlers.resetAudio?.();
     sceneHandlers.resetScent?.();

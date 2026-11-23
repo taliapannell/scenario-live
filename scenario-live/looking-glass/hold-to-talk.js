@@ -16,6 +16,7 @@ const SpeechRecognitionAPI =
 let appState = 'idle';
 let recognition = null;
 let pendingTranscript = '';
+let speechEndedAt = 0; // performance.now() at button release — start of the dream timing
 let _onTranscript = null;
 let _onLiveTranscript = null;
 let _onStateChange = null;
@@ -254,7 +255,7 @@ function buildRecognition() {
       syncButtonClass();
       const text = pendingTranscript.trim();
       pendingTranscript = '';
-      if (text) _onTranscript?.(text);
+      if (text) _onTranscript?.(text, { speechEndedAt });
       return;
     }
 
@@ -332,6 +333,7 @@ function stopListening() {
   }
 
   isListening = false;
+  speechEndedAt = performance.now();
   if (recognition) {
     setHoldState('state-processing');
     try {

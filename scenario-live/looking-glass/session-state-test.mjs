@@ -6,7 +6,7 @@
 // toward maxShifts, are uncapped, and keep their seed only for edits.
 // -----------------------------------------------------------------------------
 
-import { sessionState, configureSceneHandlers, onEntityDetected, onDreamDetected, resetSession } from '../shared/session-state.js'
+import { sessionState, configureSceneHandlers, onEntityDetected, onDreamDetected, resetSession, triggerSceneShift } from '../shared/session-state.js'
 
 let pass = 0
 let fail = 0
@@ -25,7 +25,12 @@ function assert(label, value, expected) {
 }
 
 const triggered = []
-configureSceneHandlers({ triggerScene: (prompt, opts) => triggered.push({ prompt, ...opts }) })
+configureSceneHandlers({
+  triggerScene: (prompt, opts) => {
+    triggered.push({ prompt, ...opts })
+    return Promise.resolve({ ok: true, usedFallback: false })
+  },
+})
 
 console.log('\n═══ S1: Conversation shifts cap at maxShifts ═══')
 {
@@ -70,7 +75,28 @@ console.log('\n═══ S4: Seeds — new per dream, fixed for edits ═══'
   assert('empty scene prompt ignored', triggered.length, 3)
 }
 
-console.log('\n═══ S5: resetSession clears dream state ═══')
+console.log('\n═══ S5: A non-dream scene clears the dream ═══')
+{
+  resetSession(); triggered.length = 0
+  onDreamDetected('flying cars')
+  onEntityDetected('sustainability', 'keyword', 'green city')
+  assert('conversation shift clears dream prompt', sessionState.dreamScenePrompt, null)
+  assert('conversation shift clears seed', sessionState.dreamSeed, null)
+  onDreamDetected('make it nighttime', null, null, { isEdit: true })
+  assert('"edit" with no dream showing gets a seed', sessionState.dreamSeed, v => Number.isInteger(v))
+  triggerSceneShift('timer scene')
+  assert('timer shift clears dream prompt', sessionState.dreamScenePrompt, null)
+}
+
+console.log('\n═══ S6: onDreamDetected returns the scene request ═══')
+{
+  resetSession()
+  const result = await onDreamDetected('flying cars')
+  assert('resolves to triggerScene result', result?.ok, true)
+  assert('empty prompt returns undefined', onDreamDetected(''), undefined)
+}
+
+console.log('\n═══ S7: resetSession clears dream state ═══')
 {
   resetSession()
   assert('dreamScenePrompt cleared', sessionState.dreamScenePrompt, null)

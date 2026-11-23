@@ -4,9 +4,10 @@
 // This module is the "brain + voice" wiring for Nova. It:
 //   1. Builds a small DEBUG text input (NOT the final client UI — a dev tool).
 //   2. Sends the typed message to Claude on Amazon Bedrock (InvokeModel).
-//   3. Parses 6 structured XML tags out of Claude's reply and calls
-//      onEntity({ entity, scenePrompt, audioPrompt, scentPrompt, notes }) so the scene,
-//      audio, and whiteboard can respond to what the visitor mentioned.
+//   3. Parses 8 structured XML tags out of Claude's reply. In conversation mode it
+//      calls onEntity({ entity, scenePrompt, audioPrompt, scentPrompt, notes }) so the
+//      scene, audio, and whiteboard can respond to what the visitor mentioned; in
+//      Dream Mode the visitor's own description goes straight to the walls.
 //   4. Speaks the reply with the Web Speech API, and toggles onSpeaking(true/
 //      false) so the avatar's particles/bloom react while she talks.
 //
@@ -26,7 +27,7 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
-import { resetSession, onEntityDetected, onDreamDetected } from "../shared/session-state.js";
+import { sessionState, resetSession, onEntityDetected, onDreamDetected } from "../shared/session-state.js";
 // -----------------------------------------------------------------------------
 // CONFIG
 // -----------------------------------------------------------------------------
@@ -80,7 +81,7 @@ async function fetchPreSessionData() {
 }
 
 // Builds Nova's system prompt, injecting client context when a brief is loaded.
-function buildSystemPrompt(preSession) {
+function buildSystemPrompt(preSession, currentDreamPrompt = null) {
   const clientContext = preSession
     ? `
 You have been briefed on today's client before this session began.
@@ -113,21 +114,33 @@ In dream mode:
 - Their description is the scene. Keep every element they named; do not swap,
   drop, or reinterpret subjects.
 - Add only visual craft: lighting, style, atmosphere, camera. Dreamlike, cinematic.
-- Keep <reply> to one short line, then stop. Leave <entity> empty.
+- Keep <reply> to one short line (about 10 words), then stop. Leave <entity> empty.
+  The dream is already appearing as you speak, so the reply is a statement:
+  never ask a question or ask permission to show it.
 - If they ask to change a dream ("add...", "make it..."), modify the previous
   <scene_prompt> instead of rewriting it.
 - If the request is inappropriate, redirect to a safe, whimsical version.
+  Keep the harmless heart of the idea and make the rest playful (e.g. a
+  battlefield becomes toy soldiers parading through a candy-colored meadow).
+  Always write a new <scene_prompt> for it; never refuse, and never reuse the
+  previous scene.
 Otherwise set <mode>conversation</mode> and behave as normal.
-
-After every reply, you MUST return the following seven XML tags on their own lines at the very end of your response, in exactly this order:
+${currentDreamPrompt ? `
+CURRENT DREAM: The walls are showing this dream right now:
+${currentDreamPrompt}
+If they ask to change it, start from that exact text and change only what they asked for.
+` : ""}
+After every reply, you MUST return the following eight XML tags on their own lines at the very end of your response, in exactly this order:
 
 <mode>Either "conversation" or "dream".</mode>
 
-<reply>Your spoken response to the visitor — 3 sentences or fewer, always ending with a question.</reply>
+<dream_edit>"yes" if this dream changes the current dream, "no" for a brand-new dream or in conversation mode.</dream_edit>
 
-<entity>The company name or keyword the visitor mentioned. If none, leave empty.</entity>
+<reply>Your spoken response to the visitor — 3 sentences or fewer, always ending with a question. In dream mode, one short line.</reply>
 
-<scene_prompt>A cinematic description of a real physical space that matches the conversation. Describe motion and atmosphere — not a static image. Always professional and immersive. If no entity was detected, return exactly: "Futuristic Maker's Lab in New York City. Industrial loft space with exposed brick and cool graffiti murals. 3D printers actively building objects on workbenches. Robots moving purposefully between workstations. Holographic displays floating mid-air. Chemistry glassware glowing on shelves. Purple ambient lighting. Cinematic depth, immersive atmosphere."</scene_prompt>
+<entity>The company name or industry keyword the visitor mentioned (e.g. "microsoft", "sustainability", "healthcare"). If they mention both a company and a keyword, use the company. If none, leave empty.</entity>
+
+<scene_prompt>A cinematic description of a real physical space that matches the conversation. Describe motion and atmosphere — not a static image. Always professional and immersive. In dream mode, return the dream scene described above. Otherwise, if no entity was detected, return exactly: "Futuristic Maker's Lab in New York City. Industrial loft space with exposed brick and cool graffiti murals. 3D printers actively building objects on workbenches. Robots moving purposefully between workstations. Holographic displays floating mid-air. Chemistry glassware glowing on shelves. Purple ambient lighting. Cinematic depth, immersive atmosphere."</scene_prompt>
 
 <audio_prompt>One sentence describing the sonic environment that matches the scene. Used to select a pre-sourced audio file — do not describe music, only ambient sound.</audio_prompt>
 
@@ -141,24 +154,6 @@ Leave all three lines empty if no entity was detected.
 </notes>
 
 These tags are machine instructions — they are stripped before your words are spoken. Never refer to them in your reply.
-
-Additionally, detect if the visitor mentions a specific company name or industry keyword. If you identify one, include it in an <entity> tag on its own line AFTER the <topic> tag:
-<entity>VALUE</entity>
-
-Where VALUE is the company name or keyword you detected (e.g., "microsoft", "sustainability", "healthcare"). If you detect no entity, omit this tag.
-
-After detecting an entity, generate THREE additional tags with instructions for the environment:
-
-1. A <scene_prompt> tag describing how the 3D environment should transform:
-<scene_prompt>DESCRIPTION</scene_prompt>
-
-2. An <audio_prompt> tag describing what audio/music should play:
-<audio_prompt>DESCRIPTION</audio_prompt>
-
-3. A <scent_prompt> tag describing what the room should smell like:
-<scent_prompt>DESCRIPTION</scent_prompt>
-
-These tags are machine instructions and should not be included in your spoken reply. Keep your actual response to 3 sentences or fewer, always ending with a question.
 
 GUARDRAILS — topics you must never engage with:
 - Religion or religious beliefs
@@ -369,7 +364,7 @@ function speak(text, { onStart, onEnd } = {}) {
 // Pass customMessages to use a one-off message list; omit to use the live conversation.
 export async function callClaude(customMessages) {
   const preSession = await fetchPreSessionData();
-  const systemPrompt = buildSystemPrompt(preSession);
+  const systemPrompt = buildSystemPrompt(preSession, sessionState.dreamScenePrompt);
 
   const command = new InvokeModelCommand({
     modelId: NOVA_MODEL,
@@ -396,9 +391,10 @@ export async function callClaude(customMessages) {
 // -----------------------------------------------------------------------------
 // STRUCTURED RESPONSE PARSING
 // -----------------------------------------------------------------------------
-// Extracts all 7 XML tags from Nova's reply. Returns the mode and spoken text plus the
+// Extracts all 8 XML tags from Nova's reply. Returns the mode and spoken text plus the
 // entity/scene/audio/scent/notes fields for downstream scene, audio, and whiteboard use.
-// A missing or unrecognised <mode> falls back to 'conversation'.
+// A missing or unrecognised <mode> falls back to 'conversation'; dreamEdit is only
+// true for an explicit "yes" in dream mode.
 function extractStructuredResponse(reply) {
   const get = (tag) => {
     const match = reply.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'))
@@ -406,6 +402,7 @@ function extractStructuredResponse(reply) {
   }
 
   const mode        = get('mode').toLowerCase() === 'dream' ? 'dream' : 'conversation'
+  const dreamEdit   = mode === 'dream' && get('dream_edit').toLowerCase() === 'yes'
   const spoken      = get('reply')
   const entity      = get('entity')
   const scenePrompt = get('scene_prompt')
@@ -417,7 +414,7 @@ function extractStructuredResponse(reply) {
     .map(l => l.replace(/^[-•]\s*/, '').trim())
     .filter(Boolean)
 
-  return { mode, spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
+  return { mode, dreamEdit, spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
 }
 
 // Dream replies are "one short line" — the example line is two short sentences,
@@ -467,7 +464,36 @@ function enforceResponseStyle(response) {
 const COMPANY_NAMES = ['accenture', 'microsoft', 'google', 'amazon', 'ibm', 'apple', 'meta', 'salesforce'];
 const TOPIC_MAP = { sustainability: 'sustainability', innovation: 'innovation', operations: 'operations' };
 
-export async function sendToNova(text, { force = false } = {}) {
+// Logs "client finishes speaking" → "new scene accepted by StreamDiffusion" for every
+// dream, split into the Claude and StreamDiffusion stages. "Visible" is approximated by
+// StreamDiffusion acknowledging the prompt — the browser can't see the projectors.
+// Recent timings are kept on window.dreamTimings for console inspection.
+const dreamTimings = [];
+if (typeof window !== 'undefined') window.dreamTimings = dreamTimings;
+
+async function logDreamTiming(speechEndedAt, claudeDoneAt, sceneRequest, isEdit) {
+  const result = await Promise.resolve(sceneRequest).catch(() => ({ ok: false }));
+  const sceneDoneAt = performance.now();
+  const timing = {
+    at: new Date().toISOString(),
+    isEdit,
+    claudeMs: Math.round(claudeDoneAt - speechEndedAt),
+    sceneMs: Math.round(sceneDoneAt - claudeDoneAt),
+    totalMs: Math.round(sceneDoneAt - speechEndedAt),
+    usedFallback: Boolean(result?.usedFallback),
+    ok: result?.ok !== false,
+  };
+  dreamTimings.push(timing);
+  if (dreamTimings.length > 50) dreamTimings.shift();
+  console.info(
+    `[dream-timing] speech→scene ${timing.totalMs}ms (to Claude reply ${timing.claudeMs}ms, StreamDiffusion ${timing.sceneMs}ms)` +
+    `${isEdit ? ' [edit]' : ''}${timing.usedFallback ? ' [fallback scene]' : ''}${timing.ok ? '' : ' [FAILED]'}`
+  );
+}
+
+// speechEndedAt: performance.now() when the client released push-to-talk. The debug
+// panel omits it, so timing starts at send.
+export async function sendToNova(text, { force = false, speechEndedAt = performance.now() } = {}) {
   if (!bedrockEnabled && !force) return null;
   const trimmed = text?.trim();
   if (!trimmed) return null;
@@ -476,16 +502,18 @@ export async function sendToNova(text, { force = false } = {}) {
 
   try {
     const reply = await callClaude();
+    const claudeDoneAt = performance.now();
     messages.push({ role: 'assistant', content: reply });
 
-    const { mode, spoken: rawSpoken, entity, scenePrompt, audioPrompt, scentPrompt, notes } = extractStructuredResponse(reply);
+    const { mode, dreamEdit, spoken: rawSpoken, entity, scenePrompt, audioPrompt, scentPrompt, notes } = extractStructuredResponse(reply);
     const spoken = mode === 'dream' ? enforceDreamReplyStyle(rawSpoken) : enforceResponseStyle(rawSpoken);
 
     if (mode === 'dream') {
       // Dreams bypass the entity lock and shift cap — see onDreamDetected.
       if (scenePrompt) {
-        onDreamDetected(scenePrompt, audioPrompt, scentPrompt);
+        const sceneRequest = onDreamDetected(scenePrompt, audioPrompt, scentPrompt, { isEdit: dreamEdit });
         _onDreamShift?.(); // resets the auto-shift timer so it doesn't paint over the dream
+        logDreamTiming(speechEndedAt, claudeDoneAt, sceneRequest, dreamEdit);
       }
     } else if (entity) {
       const entityType = COMPANY_NAMES.some(n => entity.toLowerCase().includes(n)) ? 'company' : 'keyword';

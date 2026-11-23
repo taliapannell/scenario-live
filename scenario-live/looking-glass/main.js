@@ -23,7 +23,7 @@ import { initNovaChat, sendToNova, enableBedrock, disableBedrock, resetMessages,
 import { resetSceneTimer, notifySceneShiftOccurred, onFirstKeywordDetected } from "./sceneTimer.js";
 import { initHoldToTalk, resetHoldToTalk } from "./hold-to-talk.js";
 import { tryEnableHoloPlay } from "./holoplay-display.js";
-import { DEFAULT_SCENE_PROMPT, DEFAULT_AUDIO_FILE, DEFAULT_SCENT_SLOT } from "./app-config.js";
+import { DEFAULT_SCENE_PROMPT, FALLBACK_SCENE_PROMPT, DEFAULT_AUDIO_FILE, DEFAULT_SCENT_SLOT } from "./app-config.js";
 import { matchAudioScene, matchAudioTopic } from "./audio/sonos.js";
 import { matchScentScene } from "./sensory/scent.js";
 import { createStreamDiffusion } from "./stream-diffusion.js";
@@ -101,7 +101,7 @@ document.body.appendChild(renderer.domElement);
 let holoActive = false;
 let renderFrame = () => renderer.render(scene, camera);
 
-const streamDiffusion = createStreamDiffusion();
+const streamDiffusion = createStreamDiffusion({ fallbackPrompt: FALLBACK_SCENE_PROMPT });
 const sonosControl = createSonosControl();
 const scentControl = createScentControl();
 configureSceneHandlers({
@@ -109,7 +109,7 @@ configureSceneHandlers({
     scenePrompt: DEFAULT_SCENE_PROMPT,
     audioFile: DEFAULT_AUDIO_FILE,
   },
-  triggerScene: (prompt) => streamDiffusion.triggerScene(prompt),
+  triggerScene: (prompt, options) => streamDiffusion.triggerScene(prompt, options),
   playAudio: (audioPrompt) => {
     const normalizedAudio = audioPrompt?.trim().toLowerCase();
     const file = /\.(mp3|wav)$/i.test(normalizedAudio || "")
@@ -783,9 +783,9 @@ initHoldToTalk({
     log.textContent = lines.join("\n");
     log.scrollTop = log.scrollHeight;
   },
-  onTranscript: async (text) => {
+  onTranscript: async (text, { speechEndedAt } = {}) => {
     try {
-      await sendToNova(text);
+      await sendToNova(text, { speechEndedAt });
     } catch (err) {
       console.error("[hold-to-talk] sendToNova failed:", err);
     }
