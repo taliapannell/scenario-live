@@ -198,10 +198,13 @@ export function enableBedrock()  { bedrockEnabled = true; }
 export function disableBedrock() { bedrockEnabled = false; }
 export function resetMessages()  { messages.length = 0; }
 
-// Returns recent conversation as a readable string for context-aware scene generation
+// Returns recent conversation as a readable string for context-aware scene generation.
+// Nova's turns are reduced to what she actually said, without the machine tags.
 export function getCurrentConversationContext() {
   return messages.slice(-10).map(m =>
-    `${m.role === 'user' ? 'Visitor' : 'Nova'}: ${m.content}`
+    m.role === 'user'
+      ? `Visitor: ${m.content}`
+      : `Nova: ${extractStructuredResponse(m.content).spoken || m.content}`
   ).join('\n')
 }
 
@@ -362,9 +365,9 @@ function speak(text, { onStart, onEnd } = {}) {
 // a Uint8Array we decode and JSON.parse — same content[] shape as the public API.
 // Exported so sceneTimer can call Claude for auto-shift generation.
 // Pass customMessages to use a one-off message list; omit to use the live conversation.
-export async function callClaude(customMessages) {
-  const preSession = await fetchPreSessionData();
-  const systemPrompt = buildSystemPrompt(preSession, sessionState.dreamScenePrompt);
+// Pass system to replace Nova's tagged-reply system prompt (e.g. for plain scene text).
+export async function callClaude(customMessages, { system } = {}) {
+  const systemPrompt = system ?? buildSystemPrompt(await fetchPreSessionData(), sessionState.dreamScenePrompt);
 
   const command = new InvokeModelCommand({
     modelId: NOVA_MODEL,
