@@ -196,7 +196,14 @@ let bedrockEnabled = false;
 
 export function enableBedrock()  { bedrockEnabled = true; }
 export function disableBedrock() { bedrockEnabled = false; }
-export function resetMessages()  { messages.length = 0; }
+export function resetMessages()  { messages.length = 0; conversationEpoch++; }
+
+// Bumped by resetMessages so a reply still in flight from the previous session is
+// dropped instead of landing in the next client's empty history.
+let conversationEpoch = 0;
+// Turns run one at a time, in order, so quick back-to-back holds can't interleave
+// their messages or talk over each other.
+let turnQueue = Promise.resolve();
 
 // Returns recent conversation as a readable string for context-aware scene generation.
 // Nova's turns are reduced to what she actually said, without the machine tags.
@@ -230,20 +237,35 @@ if (typeof window !== 'undefined') {
 // the voice will come out of the dedicated speaker.
 let routedAudioEl = null;
 let dedicatedSinkId = null;
-let appendNovaLogMessage = null;
-let currentNovaStreamingText = "";
+// --- Debug log --------------------------------------------------------------
+// Every message gets its own line. Text that streams in (Nova speaking word by
+// word, the visitor's live transcript) passes a streamKey and only updates its own
+// in-progress line; endLogStream(key) closes that line so the next one starts fresh.
+const streamingLogLines = {};
 
-function logChatMessage(who, text) {
-  if (!appendNovaLogMessage || !text) return;
-  appendNovaLogMessage(who, text);
+function logLine(who, text, streamKey = null) {
+  const log = typeof document !== "undefined" && document.querySelector("#nova-log");
+  const normalized = (text || "").replace(/\s+/g, " ").trim();
+  if (!log || !normalized) return;
+
+  let lineEl = streamKey ? streamingLogLines[streamKey] : null;
+  if (!lineEl) {
+    lineEl = document.createElement("div");
+    log.appendChild(lineEl);
+    if (streamKey) streamingLogLines[streamKey] = lineEl;
+  }
+  lineEl.textContent = `${who}: ${normalized}`;
+  log.scrollTop = log.scrollHeight;
 }
 
-function syncNovaStreamingLog(text) {
-  const normalized = (text || "").replace(/\s+/g, " ").trim();
-  if (!normalized) return;
-  if (currentNovaStreamingText === normalized) return;
-  currentNovaStreamingText = normalized;
-  logChatMessage("Nova", normalized);
+function endLogStream(streamKey) {
+  delete streamingLogLines[streamKey];
+}
+
+// Used by main.js for hold-to-talk: live text while holding, then final on release.
+export function logVisitorSpeech(text, { final = false } = {}) {
+  logLine("User", text, "visitor");
+  if (final) endLogStream("visitor");
 }
 
 // Try to find the dedicated speaker by its label (from VITE_NOVA_SPEAKER) and
@@ -315,6 +337,7 @@ export function interruptNovaSpeech(onSpeaking) {
     window.speechSynthesis.cancel();
   }
   currentUtterance = null;
+  endLogStream("nova");
   onSpeaking && onSpeaking(false);
 }
 
@@ -322,7 +345,8 @@ export function interruptNovaSpeech(onSpeaking) {
 // the avatar reacts while she's talking.
 function speak(text, { onStart, onEnd } = {}) {
   if (!("speechSynthesis" in window) || !text) {
-    // No TTS available — still fire the callbacks so the visual state is sane.
+    // No TTS available — still log the line and fire the callbacks so the visual state is sane.
+    logLine("Nova", text);
     onStart && onStart();
     onEnd && onEnd();
     return;
@@ -331,28 +355,31 @@ function speak(text, { onStart, onEnd } = {}) {
     window.speechSynthesis.cancel();
     currentUtterance = null;
   }
+  endLogStream("nova"); // each reply gets its own log line
   const utterance = new SpeechSynthesisUtterance(text);
   currentUtterance = utterance;
-  currentNovaStreamingText = "";
   if (novaVoice) utterance.voice = novaVoice;
   utterance.rate = 1.0;
   utterance.pitch = 1.05; // a touch brighter — Nova's voice
   utterance.onboundary = (event) => {
-    const nextText = text.slice(0, event.charIndex + (event.charLength || 0)).replace(/\s+/g, ' ').trim();
-    if (nextText) syncNovaStreamingLog(nextText);
+    if (currentUtterance !== utterance) return;
+    logLine("Nova", text.slice(0, event.charIndex + (event.charLength || 0)), "nova");
   };
   utterance.onstart = () => {
     onStart && onStart();
   };
-  utterance.onend = () => {
-    if (currentUtterance === utterance) currentUtterance = null;
-    currentNovaStreamingText = "";
+  // A cancelled utterance still fires onend/onerror. Only the current one may report
+  // "done" — otherwise cutting off a reply would mark Nova as not speaking mid-sentence
+  // of the next one. (interruptNovaSpeech reports "done" itself.)
+  const finish = () => {
+    if (currentUtterance !== utterance) return;
+    currentUtterance = null;
+    logLine("Nova", text, "nova"); // full line, even if the voice sent no boundary events
+    endLogStream("nova");
     onEnd && onEnd();
   };
-  utterance.onerror = () => {
-    if (currentUtterance === utterance) currentUtterance = null;
-    onEnd && onEnd();
-  }; // never leave her "stuck speaking"
+  utterance.onend = finish;
+  utterance.onerror = finish; // never leave her "stuck speaking"
   window.speechSynthesis.speak(utterance);
 }
 
@@ -465,6 +492,12 @@ function enforceResponseStyle(response) {
 // Returns the spoken reply text, or null if gated/empty.
 // =============================================================================
 const COMPANY_NAMES = ['accenture', 'microsoft', 'google', 'amazon', 'ibm', 'apple', 'meta', 'salesforce'];
+// Whole-word match, so keywords like "metal fabrication" or "metaverse" aren't treated
+// as Meta (which would lock the scene for the rest of the session).
+const COMPANY_PATTERNS = COMPANY_NAMES.map(n => new RegExp(`\\b${n}\\b`, 'i'));
+function isCompanyEntity(entity) {
+  return COMPANY_PATTERNS.some(p => p.test(entity));
+}
 const TOPIC_MAP = { sustainability: 'sustainability', innovation: 'innovation', operations: 'operations' };
 
 // Logs "client finishes speaking" → "new scene accepted by StreamDiffusion" for every
@@ -501,11 +534,20 @@ export async function sendToNova(text, { force = false, speechEndedAt = performa
   const trimmed = text?.trim();
   if (!trimmed) return null;
 
-  messages.push({ role: 'user', content: trimmed });
+  const turn = turnQueue.then(() => runTurn(trimmed, speechEndedAt));
+  turnQueue = turn.catch(() => {});
+  return turn;
+}
+
+async function runTurn(trimmed, speechEndedAt) {
+  const epoch = conversationEpoch;
+  const userMessage = { role: 'user', content: trimmed };
+  messages.push(userMessage);
 
   try {
     const reply = await callClaude();
     const claudeDoneAt = performance.now();
+    if (epoch !== conversationEpoch) return null; // session was reset while waiting
     messages.push({ role: 'assistant', content: reply });
 
     const { mode, dreamEdit, spoken: rawSpoken, entity, scenePrompt, audioPrompt, scentPrompt, notes } = extractStructuredResponse(reply);
@@ -519,10 +561,10 @@ export async function sendToNova(text, { force = false, speechEndedAt = performa
         logDreamTiming(speechEndedAt, claudeDoneAt, sceneRequest, dreamEdit);
       }
     } else if (entity) {
-      const entityType = COMPANY_NAMES.some(n => entity.toLowerCase().includes(n)) ? 'company' : 'keyword';
+      const entityType = isCompanyEntity(entity) ? 'company' : 'keyword';
       onEntityDetected(entity, entityType, scenePrompt, audioPrompt, scentPrompt);
       _onEntity?.({ entity, scenePrompt, audioPrompt, scentPrompt, notes });
-      _onSceneShift?.(scenePrompt); // first keyword: immediate shift; subsequent: timer reset
+      _onSceneShift?.(); // restarts the auto-shift countdown; onEntityDetected did the shift
 
       // Shift Nova's visual color to match a recognised topic keyword.
       const topicKey = TOPIC_MAP[entity.toLowerCase()];
@@ -536,6 +578,10 @@ export async function sendToNova(text, { force = false, speechEndedAt = performa
 
     return spoken;
   } catch (err) {
+    // Take the unanswered message back out so the next turn doesn't send two user
+    // messages in a row (Claude would answer the stale one).
+    const i = messages.lastIndexOf(userMessage);
+    if (i !== -1) messages.splice(i, 1);
     console.error('[nova-chat] Bedrock error:', err);
     throw err;
   }
@@ -584,24 +630,8 @@ function buildDebugUI() {
   const input   = panel.querySelector("#nova-input");
   const sendBtn = panel.querySelector("#nova-send");
   const interruptBtn = panel.querySelector("#nova-interrupt");
-  const log = panel.querySelector("#nova-log");
 
-  const print = (who, text) => {
-    if (!text) return;
-    const lines = (log.textContent || "").split("\n").filter(Boolean);
-    const line = `${who}: ${text}`;
-    const lastNovaLineIndex = [...lines].map((entry, index) => [entry, index]).filter(([entry]) => entry.startsWith("Nova: ")).at(-1)?.[1];
-
-    if (typeof lastNovaLineIndex === "number") {
-      lines[lastNovaLineIndex] = line;
-    } else {
-      lines.push(line);
-    }
-
-    log.textContent = lines.join("\n");
-    log.scrollTop = log.scrollHeight;
-  };
-  appendNovaLogMessage = print;
+  const print = (who, text) => logLine(who, text);
 
   if (!AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY) {
     print("system", "⚠️  No AWS credentials in .env — run the refresh command and restart Vite.");

@@ -16,6 +16,9 @@ const SpeechRecognitionAPI =
 let appState = 'idle';
 let recognition = null;
 let pendingTranscript = '';
+// Text from earlier recognition runs in the same hold — the browser ends and we
+// restart recognition during long holds, and each run starts with empty results.
+let committedTranscript = '';
 let speechEndedAt = 0; // performance.now() at button release — start of the dream timing
 let _onTranscript = null;
 let _onLiveTranscript = null;
@@ -175,32 +178,50 @@ function setMicMeter(level) {
   fill.style.width = `${clamped}%`;
 }
 
-async function ensureMicMeter() {
-  if (!navigator.mediaDevices?.getUserMedia) return;
-  if (micAudioCtx && micAnalyser) return;
+// Mic setup happens once per page; the meter loop restarts on every hold and only
+// runs while the button is held (including if setup finishes after release).
+let micSetup = null;
 
-  try {
+function setupMicAnalyser() {
+  micSetup ??= (async () => {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     micAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     micAnalyser = micAudioCtx.createAnalyser();
     micAnalyser.fftSize = 256;
     const source = micAudioCtx.createMediaStreamSource(micStream);
     source.connect(micAnalyser);
+  })().catch((err) => {
+    micSetup = null; // allow a retry on the next hold (e.g. after permission is granted)
+    throw err;
+  });
+  return micSetup;
+}
 
-    const data = new Uint8Array(micAnalyser.frequencyBinCount);
-    const tick = () => {
-      if (!micAnalyser) return;
-      micAnalyser.getByteFrequencyData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) sum += data[i];
-      const average = sum / data.length;
-      setMicMeter((average / 255) * 100);
-      micLevelRaf = requestAnimationFrame(tick);
-    };
-    tick();
+async function ensureMicMeter() {
+  if (!navigator.mediaDevices?.getUserMedia) return;
+
+  try {
+    await setupMicAnalyser();
   } catch (err) {
     console.warn('[hold-to-talk] Could not access microphone for meter:', err);
+    return;
   }
+  if (!isListening || micLevelRaf !== null) return;
+
+  const data = new Uint8Array(micAnalyser.frequencyBinCount);
+  const tick = () => {
+    if (!micAnalyser || !isListening) {
+      micLevelRaf = null;
+      return;
+    }
+    micAnalyser.getByteFrequencyData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const average = sum / data.length;
+    setMicMeter((average / 255) * 100);
+    micLevelRaf = requestAnimationFrame(tick);
+  };
+  tick();
 }
 
 function clearMicMeter() {
@@ -223,29 +244,18 @@ function buildRecognition() {
     setHoldState('state-holding');
   };
 
+  // e.results holds every result of this recognition run (finals plus the current
+  // interim), so rebuild the whole utterance from it rather than from resultIndex.
   r.onresult = (e) => {
-    let finalChunk = '';
-    let interimText = '';
-
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const transcript = e.results[i][0].transcript.trim();
-      if (e.results[i].isFinal) {
-        finalChunk += transcript + ' ';
-      } else if (transcript) {
-        interimText = transcript;
-      }
+    let runText = '';
+    for (let i = 0; i < e.results.length; i++) {
+      runText += e.results[i][0].transcript + ' ';
     }
 
-    const normalizedInterim = interimText.replace(/\s+/g, ' ').trim();
-    if (normalizedInterim) {
-      pendingTranscript = normalizedInterim;
-      _onLiveTranscript?.(normalizedInterim);
-    }
-
-    const normalizedFinal = finalChunk.replace(/\s+/g, ' ').trim();
-    if (normalizedFinal) {
-      pendingTranscript = normalizedFinal;
-      _onLiveTranscript?.(normalizedFinal);
+    const fullText = `${committedTranscript} ${runText}`.replace(/\s+/g, ' ').trim();
+    if (fullText) {
+      pendingTranscript = fullText;
+      _onLiveTranscript?.(fullText);
     }
   };
 
@@ -255,21 +265,26 @@ function buildRecognition() {
       syncButtonClass();
       const text = pendingTranscript.trim();
       pendingTranscript = '';
+      committedTranscript = '';
       if (text) _onTranscript?.(text, { speechEndedAt });
       return;
     }
 
+    // Still holding — keep what was said so far and start a new run.
+    committedTranscript = pendingTranscript;
     try {
       r.start();
     } catch (_) {}
   };
 
   r.onerror = (e) => {
-    // 'no-speech' and 'aborted' are expected on quick presses — not errors.
+    // 'no-speech' and 'aborted' are expected on quick presses — not errors. They can
+    // also fire mid-hold after a pause, so keep anything already said.
     if (['no-speech', 'aborted'].includes(e.error)) {
-      pendingTranscript = '';
-      setHoldState(null);
-      syncButtonClass();
+      if (!isListening) {
+        setHoldState(null);
+        syncButtonClass();
+      }
       return;
     }
 
@@ -277,6 +292,7 @@ function buildRecognition() {
     setHoldState(null);
     syncButtonClass();
     pendingTranscript = '';
+    committedTranscript = '';
 
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       console.warn('[hold-to-talk] Microphone permission was denied. Allow mic access in the browser and hold again.');
@@ -294,6 +310,7 @@ function startListening() {
   if (appState === 'idle') transitionTo('active');
 
   pendingTranscript = '';
+  committedTranscript = '';
   setHoldState('state-holding');
   ensureMicMeter();
 
@@ -419,6 +436,7 @@ export function resetHoldToTalk() {
   isListening = false;
   clearMicMeter();
   pendingTranscript = '';
+  committedTranscript = '';
   transitionTo('idle');
   console.log('[hold-to-talk] Reset to IDLE state.');
 }
