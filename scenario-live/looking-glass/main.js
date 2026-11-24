@@ -19,11 +19,11 @@
 // =============================================================================
 
 import * as THREE from "three";
-import { initNovaChat, sendToNova, enableBedrock, disableBedrock, resetMessages, handleEndOfSession, setSceneShiftCallback } from "./nova-chat.js";
-import { resetSceneTimer, notifySceneShiftOccurred, onFirstKeywordDetected } from "./sceneTimer.js";
+import { initNovaChat, sendToNova, enableBedrock, disableBedrock, resetMessages, handleEndOfSession, setSceneShiftCallback, setDreamShiftCallback, logVisitorSpeech } from "./nova-chat.js";
+import { resetSceneTimer, notifySceneShiftOccurred } from "./sceneTimer.js";
 import { initHoldToTalk, resetHoldToTalk } from "./hold-to-talk.js";
 import { tryEnableHoloPlay } from "./holoplay-display.js";
-import { DEFAULT_SCENE_PROMPT, DEFAULT_AUDIO_FILE, DEFAULT_SCENT_SLOT } from "./app-config.js";
+import { DEFAULT_SCENE_PROMPT, FALLBACK_SCENE_PROMPT, DEFAULT_AUDIO_FILE, DEFAULT_SCENT_SLOT } from "./app-config.js";
 import { matchAudioScene, matchAudioTopic } from "./audio/sonos.js";
 import { matchScentScene } from "./sensory/scent.js";
 import { createStreamDiffusion } from "./stream-diffusion.js";
@@ -101,7 +101,7 @@ document.body.appendChild(renderer.domElement);
 let holoActive = false;
 let renderFrame = () => renderer.render(scene, camera);
 
-const streamDiffusion = createStreamDiffusion();
+const streamDiffusion = createStreamDiffusion({ fallbackPrompt: FALLBACK_SCENE_PROMPT });
 const sonosControl = createSonosControl();
 const scentControl = createScentControl();
 configureSceneHandlers({
@@ -109,7 +109,7 @@ configureSceneHandlers({
     scenePrompt: DEFAULT_SCENE_PROMPT,
     audioFile: DEFAULT_AUDIO_FILE,
   },
-  triggerScene: (prompt) => streamDiffusion.triggerScene(prompt),
+  triggerScene: (prompt, options) => streamDiffusion.triggerScene(prompt, options),
   playAudio: (audioPrompt) => {
     const normalizedAudio = audioPrompt?.trim().toLowerCase();
     const file = /\.(mp3|wav)$/i.test(normalizedAudio || "")
@@ -583,10 +583,19 @@ window.addEventListener("resize", () => {
 // =============================================================================
 // 10. TEMPORARY active/idle toggle (Space or "A") — stand-in for speech later.
 // =============================================================================
+// Dev shortcuts ignore keys typed into a text field (e.g. the Nova debug input) and
+// modified keys (Cmd/Ctrl+A is select-all, not a toggle).
+function isShortcutKey(e) {
+  const t = e.target;
+  const typing = t && (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) || t.isContentEditable);
+  return !typing && !e.ctrlKey && !e.metaKey && !e.altKey;
+}
+
 window.addEventListener("keydown", (e) => {
   if (e.code === "Space") {
     return;
   }
+  if (!isShortcutKey(e)) return;
   if (e.key.toLowerCase() === "a") {
     novaActive = !novaActive;
     console.log("novaActive =", novaActive);
@@ -630,7 +639,7 @@ window.setTopic = setTopic;
 // Preview helper: number keys 1–4 switch topics.
 const TOPIC_KEYS = { 1: "default", 2: "sustainability", 3: "innovation", 4: "operations" };
 window.addEventListener("keydown", (e) => {
-  if (TOPIC_KEYS[e.key]) setTopic(TOPIC_KEYS[e.key]);
+  if (isShortcutKey(e) && TOPIC_KEYS[e.key]) setTopic(TOPIC_KEYS[e.key]);
 });
 
 // =============================================================================
@@ -760,31 +769,15 @@ initNovaChat({
     novaActive = isSpeaking;
   },
 });
-setSceneShiftCallback(onFirstKeywordDetected);
+setSceneShiftCallback(notifySceneShiftOccurred);
+setDreamShiftCallback(notifySceneShiftOccurred);
 
 initHoldToTalk({
-  onLiveTranscript: (text) => {
-    const log = document.querySelector("#nova-log");
-    if (!log) return;
-    const trimmed = text?.trim();
-    if (!trimmed) return;
-
-    const lines = (log.textContent || "").split("\n").filter(Boolean);
-    const lastUserLineIndex = [...lines].map((line, index) => [line, index]).filter(([line]) => line.startsWith("User: ")).at(-1)?.[1];
-
-    const userLine = `User: ${trimmed}`;
-    if (typeof lastUserLineIndex === "number") {
-      lines[lastUserLineIndex] = userLine;
-    } else {
-      lines.push(userLine);
-    }
-
-    log.textContent = lines.join("\n");
-    log.scrollTop = log.scrollHeight;
-  },
-  onTranscript: async (text) => {
+  onLiveTranscript: (text) => logVisitorSpeech(text),
+  onTranscript: async (text, { speechEndedAt } = {}) => {
+    logVisitorSpeech(text, { final: true });
     try {
-      await sendToNova(text);
+      await sendToNova(text, { speechEndedAt });
     } catch (err) {
       console.error("[hold-to-talk] sendToNova failed:", err);
     }
@@ -792,7 +785,7 @@ initHoldToTalk({
   onStateChange: (state) => {
     if (state === "active") {
       enableBedrock();
-      resetSceneTimer(); // clear firstKeywordFired + any leftover timer from a previous session
+      resetSceneTimer(); // clear any leftover timer from a previous session
       console.log("[app] ACTIVE — Bedrock gate open.");
     } else {
       disableBedrock();
@@ -807,7 +800,7 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     handleEndOfSession(); // resetSession() → default scene + audio via session-state
     resetMessages();      // clear conversation history so next demo starts fresh
-    resetSceneTimer();    // clear auto-shift timer and firstKeywordFired flag
+    resetSceneTimer();    // clear auto-shift timer and cooldown
     disableBedrock();     // re-gate until next button press
     resetHoldToTalk();    // return button to idle pulsing state
     console.log("[app] Demo reset to IDLE state.");

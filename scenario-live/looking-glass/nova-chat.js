@@ -4,9 +4,10 @@
 // This module is the "brain + voice" wiring for Nova. It:
 //   1. Builds a small DEBUG text input (NOT the final client UI — a dev tool).
 //   2. Sends the typed message to Claude on Amazon Bedrock (InvokeModel).
-//   3. Parses 6 structured XML tags out of Claude's reply and calls
-//      onEntity({ entity, scenePrompt, audioPrompt, scentPrompt, notes }) so the scene,
-//      audio, and whiteboard can respond to what the visitor mentioned.
+//   3. Parses 8 structured XML tags out of Claude's reply. In conversation mode it
+//      calls onEntity({ entity, scenePrompt, audioPrompt, scentPrompt, notes }) so the
+//      scene, audio, and whiteboard can respond to what the visitor mentioned; in
+//      Dream Mode the visitor's own description goes straight to the walls.
 //   4. Speaks the reply with the Web Speech API, and toggles onSpeaking(true/
 //      false) so the avatar's particles/bloom react while she talks.
 //
@@ -26,7 +27,7 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
-import { resetSession, onEntityDetected } from "../shared/session-state.js";
+import { sessionState, resetSession, onEntityDetected, onDreamDetected } from "../shared/session-state.js";
 // -----------------------------------------------------------------------------
 // CONFIG
 // -----------------------------------------------------------------------------
@@ -80,7 +81,7 @@ async function fetchPreSessionData() {
 }
 
 // Builds Nova's system prompt, injecting client context when a brief is loaded.
-function buildSystemPrompt(preSession) {
+function buildSystemPrompt(preSession, currentDreamPrompt = null) {
   const clientContext = preSession
     ? `
 You have been briefed on today's client before this session began.
@@ -105,15 +106,41 @@ Every response must end with a question directed at the client.
 Never lecture. Never list. Never give a paragraph when a sentence will do.
 If you feel the urge to explain more, resist it — ask instead.
 The question at the end should feel natural, not forced. It should come from genuine curiosity about the client's situation.
-These rules apply to every single response Nova gives, regardless of topic, regardless of complexity. If the answer genuinely requires more than 3 sentences, break it into two turns — answer part of it, ask a question, and let the client's response open the door to the rest.
+These rules apply to every conversation-mode response Nova gives, regardless of topic, regardless of complexity. If the answer genuinely requires more than 3 sentences, break it into two turns — answer part of it, ask a question, and let the client's response open the door to the rest. Dream mode (below) has its own reply rule.
 
-After every reply, you MUST return the following six XML tags on their own lines at the very end of your response, in exactly this order:
+DREAM MODE: If the person describes something they imagine or want to see
+(e.g. "I'm dreaming of..."), set <mode>dream</mode>.
+In dream mode:
+- Their description is the scene. Keep every element they named; do not swap,
+  drop, or reinterpret subjects.
+- Add only visual craft: lighting, style, atmosphere, camera. Dreamlike, cinematic.
+- Keep <reply> to one short line (about 10 words), then stop. Leave <entity> empty.
+  The dream is already appearing as you speak, so the reply is a statement:
+  never ask a question or ask permission to show it.
+- If they ask to change a dream ("add...", "make it..."), modify the previous
+  <scene_prompt> instead of rewriting it.
+- If the request is inappropriate, redirect to a safe, whimsical version.
+  Keep the harmless heart of the idea and make the rest playful (e.g. a
+  battlefield becomes toy soldiers parading through a candy-colored meadow).
+  Always write a new <scene_prompt> for it; never refuse, and never reuse the
+  previous scene.
+Otherwise set <mode>conversation</mode> and behave as normal.
+${currentDreamPrompt ? `
+CURRENT DREAM: The walls are showing this dream right now:
+${currentDreamPrompt}
+If they ask to change it, start from that exact text and change only what they asked for.
+` : ""}
+After every reply, you MUST return the following eight XML tags on their own lines at the very end of your response, in exactly this order:
 
-<reply>Your spoken response to the visitor — 3 sentences or fewer, always ending with a question.</reply>
+<mode>Either "conversation" or "dream".</mode>
 
-<entity>The company name or keyword the visitor mentioned. If none, leave empty.</entity>
+<dream_edit>"yes" if this dream changes the current dream, "no" for a brand-new dream or in conversation mode.</dream_edit>
 
-<scene_prompt>A cinematic description of a real physical space that matches the conversation. Describe motion and atmosphere — not a static image. Always professional and immersive. If no entity was detected, return exactly: "Futuristic Maker's Lab in New York City. Industrial loft space with exposed brick and cool graffiti murals. 3D printers actively building objects on workbenches. Robots moving purposefully between workstations. Holographic displays floating mid-air. Chemistry glassware glowing on shelves. Purple ambient lighting. Cinematic depth, immersive atmosphere."</scene_prompt>
+<reply>Your spoken response to the visitor — 3 sentences or fewer, always ending with a question. In dream mode, one short line.</reply>
+
+<entity>The company name or industry keyword the visitor mentioned (e.g. "microsoft", "sustainability", "healthcare"). If they mention both a company and a keyword, use the company. If none, leave empty.</entity>
+
+<scene_prompt>A cinematic description of a real physical space that matches the conversation. Describe motion and atmosphere — not a static image. Always professional and immersive. In dream mode, return the dream scene described above. Otherwise, if no entity was detected, return exactly: "Futuristic Maker's Lab in New York City. Industrial loft space with exposed brick and cool graffiti murals. 3D printers actively building objects on workbenches. Robots moving purposefully between workstations. Holographic displays floating mid-air. Chemistry glassware glowing on shelves. Purple ambient lighting. Cinematic depth, immersive atmosphere."</scene_prompt>
 
 <audio_prompt>One sentence describing the sonic environment that matches the scene. Used to select a pre-sourced audio file — do not describe music, only ambient sound.</audio_prompt>
 
@@ -127,24 +154,6 @@ Leave all three lines empty if no entity was detected.
 </notes>
 
 These tags are machine instructions — they are stripped before your words are spoken. Never refer to them in your reply.
-
-Additionally, detect if the visitor mentions a specific company name or industry keyword. If you identify one, include it in an <entity> tag on its own line AFTER the <topic> tag:
-<entity>VALUE</entity>
-
-Where VALUE is the company name or keyword you detected (e.g., "microsoft", "sustainability", "healthcare"). If you detect no entity, omit this tag.
-
-After detecting an entity, generate THREE additional tags with instructions for the environment:
-
-1. A <scene_prompt> tag describing how the 3D environment should transform:
-<scene_prompt>DESCRIPTION</scene_prompt>
-
-2. An <audio_prompt> tag describing what audio/music should play:
-<audio_prompt>DESCRIPTION</audio_prompt>
-
-3. A <scent_prompt> tag describing what the room should smell like:
-<scent_prompt>DESCRIPTION</scent_prompt>
-
-These tags are machine instructions and should not be included in your spoken reply. Keep your actual response to 3 sentences or fewer, always ending with a question.
 
 GUARDRAILS — topics you must never engage with:
 - Religion or religious beliefs
@@ -187,18 +196,30 @@ let bedrockEnabled = false;
 
 export function enableBedrock()  { bedrockEnabled = true; }
 export function disableBedrock() { bedrockEnabled = false; }
-export function resetMessages()  { messages.length = 0; }
+export function resetMessages()  { messages.length = 0; conversationEpoch++; }
 
-// Returns recent conversation as a readable string for context-aware scene generation
+// Bumped by resetMessages so a reply still in flight from the previous session is
+// dropped instead of landing in the next client's empty history.
+let conversationEpoch = 0;
+// Turns run one at a time, in order, so quick back-to-back holds can't interleave
+// their messages or talk over each other.
+let turnQueue = Promise.resolve();
+
+// Returns recent conversation as a readable string for context-aware scene generation.
+// Nova's turns are reduced to what she actually said, without the machine tags.
 export function getCurrentConversationContext() {
   return messages.slice(-10).map(m =>
-    `${m.role === 'user' ? 'Visitor' : 'Nova'}: ${m.content}`
+    m.role === 'user'
+      ? `Visitor: ${m.content}`
+      : `Nova: ${extractStructuredResponse(m.content).spoken || m.content}`
   ).join('\n')
 }
 
 // Called by main.js to wire scene-shift notifications without a circular import
 let _onSceneShift = null
 export function setSceneShiftCallback(fn) { _onSceneShift = fn }
+let _onDreamShift = null
+export function setDreamShiftCallback(fn) { _onDreamShift = fn }
 
 // Expose for dev-console use (so devs can test without pressing the button).
 if (typeof window !== 'undefined') {
@@ -216,20 +237,35 @@ if (typeof window !== 'undefined') {
 // the voice will come out of the dedicated speaker.
 let routedAudioEl = null;
 let dedicatedSinkId = null;
-let appendNovaLogMessage = null;
-let currentNovaStreamingText = "";
+// --- Debug log --------------------------------------------------------------
+// Every message gets its own line. Text that streams in (Nova speaking word by
+// word, the visitor's live transcript) passes a streamKey and only updates its own
+// in-progress line; endLogStream(key) closes that line so the next one starts fresh.
+const streamingLogLines = {};
 
-function logChatMessage(who, text) {
-  if (!appendNovaLogMessage || !text) return;
-  appendNovaLogMessage(who, text);
+function logLine(who, text, streamKey = null) {
+  const log = typeof document !== "undefined" && document.querySelector("#nova-log");
+  const normalized = (text || "").replace(/\s+/g, " ").trim();
+  if (!log || !normalized) return;
+
+  let lineEl = streamKey ? streamingLogLines[streamKey] : null;
+  if (!lineEl) {
+    lineEl = document.createElement("div");
+    log.appendChild(lineEl);
+    if (streamKey) streamingLogLines[streamKey] = lineEl;
+  }
+  lineEl.textContent = `${who}: ${normalized}`;
+  log.scrollTop = log.scrollHeight;
 }
 
-function syncNovaStreamingLog(text) {
-  const normalized = (text || "").replace(/\s+/g, " ").trim();
-  if (!normalized) return;
-  if (currentNovaStreamingText === normalized) return;
-  currentNovaStreamingText = normalized;
-  logChatMessage("Nova", normalized);
+function endLogStream(streamKey) {
+  delete streamingLogLines[streamKey];
+}
+
+// Used by main.js for hold-to-talk: live text while holding, then final on release.
+export function logVisitorSpeech(text, { final = false } = {}) {
+  logLine("User", text, "visitor");
+  if (final) endLogStream("visitor");
 }
 
 // Try to find the dedicated speaker by its label (from VITE_NOVA_SPEAKER) and
@@ -301,6 +337,7 @@ export function interruptNovaSpeech(onSpeaking) {
     window.speechSynthesis.cancel();
   }
   currentUtterance = null;
+  endLogStream("nova");
   onSpeaking && onSpeaking(false);
 }
 
@@ -308,7 +345,8 @@ export function interruptNovaSpeech(onSpeaking) {
 // the avatar reacts while she's talking.
 function speak(text, { onStart, onEnd } = {}) {
   if (!("speechSynthesis" in window) || !text) {
-    // No TTS available — still fire the callbacks so the visual state is sane.
+    // No TTS available — still log the line and fire the callbacks so the visual state is sane.
+    logLine("Nova", text);
     onStart && onStart();
     onEnd && onEnd();
     return;
@@ -317,28 +355,31 @@ function speak(text, { onStart, onEnd } = {}) {
     window.speechSynthesis.cancel();
     currentUtterance = null;
   }
+  endLogStream("nova"); // each reply gets its own log line
   const utterance = new SpeechSynthesisUtterance(text);
   currentUtterance = utterance;
-  currentNovaStreamingText = "";
   if (novaVoice) utterance.voice = novaVoice;
   utterance.rate = 1.0;
   utterance.pitch = 1.05; // a touch brighter — Nova's voice
   utterance.onboundary = (event) => {
-    const nextText = text.slice(0, event.charIndex + (event.charLength || 0)).replace(/\s+/g, ' ').trim();
-    if (nextText) syncNovaStreamingLog(nextText);
+    if (currentUtterance !== utterance) return;
+    logLine("Nova", text.slice(0, event.charIndex + (event.charLength || 0)), "nova");
   };
   utterance.onstart = () => {
     onStart && onStart();
   };
-  utterance.onend = () => {
-    if (currentUtterance === utterance) currentUtterance = null;
-    currentNovaStreamingText = "";
+  // A cancelled utterance still fires onend/onerror. Only the current one may report
+  // "done" — otherwise cutting off a reply would mark Nova as not speaking mid-sentence
+  // of the next one. (interruptNovaSpeech reports "done" itself.)
+  const finish = () => {
+    if (currentUtterance !== utterance) return;
+    currentUtterance = null;
+    logLine("Nova", text, "nova"); // full line, even if the voice sent no boundary events
+    endLogStream("nova");
     onEnd && onEnd();
   };
-  utterance.onerror = () => {
-    if (currentUtterance === utterance) currentUtterance = null;
-    onEnd && onEnd();
-  }; // never leave her "stuck speaking"
+  utterance.onend = finish;
+  utterance.onerror = finish; // never leave her "stuck speaking"
   window.speechSynthesis.speak(utterance);
 }
 
@@ -351,9 +392,9 @@ function speak(text, { onStart, onEnd } = {}) {
 // a Uint8Array we decode and JSON.parse — same content[] shape as the public API.
 // Exported so sceneTimer can call Claude for auto-shift generation.
 // Pass customMessages to use a one-off message list; omit to use the live conversation.
-export async function callClaude(customMessages) {
-  const preSession = await fetchPreSessionData();
-  const systemPrompt = buildSystemPrompt(preSession);
+// Pass system to replace Nova's tagged-reply system prompt (e.g. for plain scene text).
+export async function callClaude(customMessages, { system } = {}) {
+  const systemPrompt = system ?? buildSystemPrompt(await fetchPreSessionData(), sessionState.dreamScenePrompt);
 
   const command = new InvokeModelCommand({
     modelId: NOVA_MODEL,
@@ -380,14 +421,18 @@ export async function callClaude(customMessages) {
 // -----------------------------------------------------------------------------
 // STRUCTURED RESPONSE PARSING
 // -----------------------------------------------------------------------------
-// Extracts all 6 XML tags from Nova's reply. Returns the spoken text plus the
+// Extracts all 8 XML tags from Nova's reply. Returns the mode and spoken text plus the
 // entity/scene/audio/scent/notes fields for downstream scene, audio, and whiteboard use.
+// A missing or unrecognised <mode> falls back to 'conversation'; dreamEdit is only
+// true for an explicit "yes" in dream mode.
 function extractStructuredResponse(reply) {
   const get = (tag) => {
     const match = reply.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'))
     return match ? match[1].trim() : ''
   }
 
+  const mode        = get('mode').toLowerCase() === 'dream' ? 'dream' : 'conversation'
+  const dreamEdit   = mode === 'dream' && get('dream_edit').toLowerCase() === 'yes'
   const spoken      = get('reply')
   const entity      = get('entity')
   const scenePrompt = get('scene_prompt')
@@ -399,7 +444,22 @@ function extractStructuredResponse(reply) {
     .map(l => l.replace(/^[-•]\s*/, '').trim())
     .filter(Boolean)
 
-  return { spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
+  return { mode, dreamEdit, spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
+}
+
+// Dream replies are "one short line" — the example line is two short sentences,
+// so cap at 2 and don't expect a closing question.
+function enforceDreamReplyStyle(response) {
+  const sentences = response
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0)
+
+  if (sentences.length > 2) {
+    console.warn('[nova-chat] Dream reply exceeded one short line — trimming:', response)
+    return sentences.slice(0, 2).join(' ')
+  }
+  return response
 }
 
 // Trims Nova's spoken reply to 3 sentences max and warns when the model drifts.
@@ -432,27 +492,79 @@ function enforceResponseStyle(response) {
 // Returns the spoken reply text, or null if gated/empty.
 // =============================================================================
 const COMPANY_NAMES = ['accenture', 'microsoft', 'google', 'amazon', 'ibm', 'apple', 'meta', 'salesforce'];
+// Whole-word match, so keywords like "metal fabrication" or "metaverse" aren't treated
+// as Meta (which would lock the scene for the rest of the session).
+const COMPANY_PATTERNS = COMPANY_NAMES.map(n => new RegExp(`\\b${n}\\b`, 'i'));
+function isCompanyEntity(entity) {
+  return COMPANY_PATTERNS.some(p => p.test(entity));
+}
 const TOPIC_MAP = { sustainability: 'sustainability', innovation: 'innovation', operations: 'operations' };
 
-export async function sendToNova(text, { force = false } = {}) {
+// Logs "client finishes speaking" → "new scene accepted by StreamDiffusion" for every
+// dream, split into the Claude and StreamDiffusion stages. "Visible" is approximated by
+// StreamDiffusion acknowledging the prompt — the browser can't see the projectors.
+// Recent timings are kept on window.dreamTimings for console inspection.
+const dreamTimings = [];
+if (typeof window !== 'undefined') window.dreamTimings = dreamTimings;
+
+async function logDreamTiming(speechEndedAt, claudeDoneAt, sceneRequest, isEdit) {
+  const result = await Promise.resolve(sceneRequest).catch(() => ({ ok: false }));
+  const sceneDoneAt = performance.now();
+  const timing = {
+    at: new Date().toISOString(),
+    isEdit,
+    claudeMs: Math.round(claudeDoneAt - speechEndedAt),
+    sceneMs: Math.round(sceneDoneAt - claudeDoneAt),
+    totalMs: Math.round(sceneDoneAt - speechEndedAt),
+    usedFallback: Boolean(result?.usedFallback),
+    ok: result?.ok !== false,
+  };
+  dreamTimings.push(timing);
+  if (dreamTimings.length > 50) dreamTimings.shift();
+  console.info(
+    `[dream-timing] speech→scene ${timing.totalMs}ms (to Claude reply ${timing.claudeMs}ms, StreamDiffusion ${timing.sceneMs}ms)` +
+    `${isEdit ? ' [edit]' : ''}${timing.usedFallback ? ' [fallback scene]' : ''}${timing.ok ? '' : ' [FAILED]'}`
+  );
+}
+
+// speechEndedAt: performance.now() when the client released push-to-talk. The debug
+// panel omits it, so timing starts at send.
+export async function sendToNova(text, { force = false, speechEndedAt = performance.now() } = {}) {
   if (!bedrockEnabled && !force) return null;
   const trimmed = text?.trim();
   if (!trimmed) return null;
 
-  messages.push({ role: 'user', content: trimmed });
+  const turn = turnQueue.then(() => runTurn(trimmed, speechEndedAt));
+  turnQueue = turn.catch(() => {});
+  return turn;
+}
+
+async function runTurn(trimmed, speechEndedAt) {
+  const epoch = conversationEpoch;
+  const userMessage = { role: 'user', content: trimmed };
+  messages.push(userMessage);
 
   try {
     const reply = await callClaude();
+    const claudeDoneAt = performance.now();
+    if (epoch !== conversationEpoch) return null; // session was reset while waiting
     messages.push({ role: 'assistant', content: reply });
 
-    const { spoken: rawSpoken, entity, scenePrompt, audioPrompt, scentPrompt, notes } = extractStructuredResponse(reply);
-    const spoken = enforceResponseStyle(rawSpoken);
+    const { mode, dreamEdit, spoken: rawSpoken, entity, scenePrompt, audioPrompt, scentPrompt, notes } = extractStructuredResponse(reply);
+    const spoken = mode === 'dream' ? enforceDreamReplyStyle(rawSpoken) : enforceResponseStyle(rawSpoken);
 
-    if (entity) {
-      const entityType = COMPANY_NAMES.some(n => entity.toLowerCase().includes(n)) ? 'company' : 'keyword';
+    if (mode === 'dream') {
+      // Dreams bypass the entity lock and shift cap — see onDreamDetected.
+      if (scenePrompt) {
+        const sceneRequest = onDreamDetected(scenePrompt, audioPrompt, scentPrompt, { isEdit: dreamEdit });
+        _onDreamShift?.(); // resets the auto-shift timer so it doesn't paint over the dream
+        logDreamTiming(speechEndedAt, claudeDoneAt, sceneRequest, dreamEdit);
+      }
+    } else if (entity) {
+      const entityType = isCompanyEntity(entity) ? 'company' : 'keyword';
       onEntityDetected(entity, entityType, scenePrompt, audioPrompt, scentPrompt);
       _onEntity?.({ entity, scenePrompt, audioPrompt, scentPrompt, notes });
-      _onSceneShift?.(scenePrompt); // first keyword: immediate shift; subsequent: timer reset
+      _onSceneShift?.(); // restarts the auto-shift countdown; onEntityDetected did the shift
 
       // Shift Nova's visual color to match a recognised topic keyword.
       const topicKey = TOPIC_MAP[entity.toLowerCase()];
@@ -466,6 +578,10 @@ export async function sendToNova(text, { force = false } = {}) {
 
     return spoken;
   } catch (err) {
+    // Take the unanswered message back out so the next turn doesn't send two user
+    // messages in a row (Claude would answer the stale one).
+    const i = messages.lastIndexOf(userMessage);
+    if (i !== -1) messages.splice(i, 1);
     console.error('[nova-chat] Bedrock error:', err);
     throw err;
   }
@@ -514,24 +630,8 @@ function buildDebugUI() {
   const input   = panel.querySelector("#nova-input");
   const sendBtn = panel.querySelector("#nova-send");
   const interruptBtn = panel.querySelector("#nova-interrupt");
-  const log = panel.querySelector("#nova-log");
 
-  const print = (who, text) => {
-    if (!text) return;
-    const lines = (log.textContent || "").split("\n").filter(Boolean);
-    const line = `${who}: ${text}`;
-    const lastNovaLineIndex = [...lines].map((entry, index) => [entry, index]).filter(([entry]) => entry.startsWith("Nova: ")).at(-1)?.[1];
-
-    if (typeof lastNovaLineIndex === "number") {
-      lines[lastNovaLineIndex] = line;
-    } else {
-      lines.push(line);
-    }
-
-    log.textContent = lines.join("\n");
-    log.scrollTop = log.scrollHeight;
-  };
-  appendNovaLogMessage = print;
+  const print = (who, text) => logLine(who, text);
 
   if (!AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY) {
     print("system", "⚠️  No AWS credentials in .env — run the refresh command and restart Vite.");

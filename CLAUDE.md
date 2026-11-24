@@ -10,17 +10,21 @@ The public website is a separate repo (`makers-lab`). Audio lives on the demo PC
 ## Nova / Looking Glass (`scenario-live/looking-glass`)
 
 - **Brain:** `nova-chat.js` calls Claude Sonnet 4.6 (`global.anthropic.claude-sonnet-4-6`) on AWS Bedrock directly from the browser.
-  - Replies are 3 sentences or fewer and end with a question.
+  - Conversation replies are 3 sentences or fewer and end with a question.
   - The system prompt includes a guardrail topic list and a pre-session client brief fetched from `http://localhost:3001/api/pre-session`.
-  - Replies must include the XML tags `reply`, `entity`, `scene_prompt`, `audio_prompt`, `scent_prompt` and `notes`.
-  - The prompt text still describes an older `<topic>` tag and a "three additional tags" step that overlap with the six-tag format. It needs cleanup.
+  - Replies must include the XML tags `mode`, `dream_edit`, `reply`, `entity`, `scene_prompt`, `audio_prompt`, `scent_prompt` and `notes`.
+- **Dream Mode:** when the client describes something they imagine, Claude sets `<mode>dream</mode>` and the client's words become the scene. The code never detects dreams by phrase matching.
+  - Missing or unknown `<mode>` means conversation. `<dream_edit>yes</dream_edit>` marks an edit of the current dream.
+  - The reply is one short line with no question. Inappropriate dreams are redirected to a safe, whimsical scene.
+  - Dreams bypass the company lock and don't count toward `maxShifts`. Session state keeps the current dream prompt (fed back into the system prompt) and its seed, which stays fixed for edits. Any non-dream shift clears both.
+  - Every dream logs `[dream-timing]` (push-to-talk release → StreamDiffusion acknowledged); recent timings are on `window.dreamTimings`.
 - **Input:** `hold-to-talk.js` is push-to-talk. The first press moves the session IDLE to ACTIVE and opens the Bedrock gate (`enableBedrock`). Nova's voice is the browser Web Speech API.
 - **Session logic:** `shared/session-state.js`.
   - A company mention locks the scene.
   - Keywords can trigger up to `maxShifts` (2) shifts, only while no company is locked.
   - `sceneTimer.js` forces a contextual scene shift every 3 minutes, with an 8-second cooldown.
 - **Outputs**, wired in `main.js` via `configureSceneHandlers`:
-  - Scene: `stream-diffusion.js` (`VITE_STREAM_DIFFUSION_URL`, logs only if unset).
+  - Scene: `stream-diffusion.js` (`VITE_STREAM_DIFFUSION_URL`, logs only if unset). POSTs `{ prompt }`, plus `seed` for dreams. On a failed request it sends `FALLBACK_SCENE_PROMPT` (`app-config.js`) once.
   - Audio: `sonos-control.js` (`VITE_SONOS_URL`, default `localhost:5005`, room "Immersive Experience Room").
   - Scent: `scent-control.js` calls `scent-bridge.js` (HTTP :5011 to UDP 192.168.10.28:5010, the Olorama device).
 - **Scent mapping:** `sensory/scent.js` maps keywords to slots 1–6. Slots 7–10 are placeholders, and the cartridge mapping is unconfirmed until the hardware is.
@@ -34,6 +38,9 @@ npm install
 npm run dev            # Vite, http://localhost:5173 (use `nvm use 24` if node is missing)
 npm run mock           # mock server :3001 (pre-session + NFC assign)
 npm run scent-bridge   # scent relay :5011 -> Olorama UDP
+node nova-parser-test.mjs      # offline tag parser tests
+node session-state-test.mjs    # offline shift cap / Dream Mode state tests
+node dream-mode-live-test.mjs  # live Bedrock Dream Mode scenarios (needs `aws login`)
 ```
 
 - **AWS credentials** expire after about an hour. Run `aws login` (region us-east-1), then `./aws-credentials.sh`, which assumes `scenario-live-bedrock-role` and writes `.env`. Restart Vite afterward. "Security token expired" means this step is needed. See `AWS.md`.
