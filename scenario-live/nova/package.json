@@ -8,7 +8,6 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1077.0",
     "@aws-sdk/client-sts": "^3.1085.0",
-    "holoplay": "^1.0.3",
     "three": "^0.184.0"
   },
   "devDependencies": {
