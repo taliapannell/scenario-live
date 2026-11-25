@@ -44,20 +44,14 @@ function onEntityDetected(entity, entityType, scenePrompt, audioPrompt, scentPro
             sessionState.entityLocked = true;
             sessionState.currentEntity = entity;
             setCurrentScene(scenePrompt, audioPrompt, scentPrompt);
-            sceneHandlers.triggerScene?.(scenePrompt);
-            sceneHandlers.playAudio?.(audioPrompt);
             sceneHandlers.releaseScent?.(scentPrompt, entity);
-            sessionState.shiftCount++;
         }
         // If already company-locked, silently ignore
     } else if (entityType === "keyword") {
         // Keyword detection: only trigger if company is not locked and we haven't hit maxShifts
         if (!sessionState.entityLocked && sessionState.shiftCount < sessionState.maxShifts) {
             setCurrentScene(scenePrompt, audioPrompt, scentPrompt);
-            sceneHandlers.triggerScene?.(scenePrompt);
-            sceneHandlers.playAudio?.(audioPrompt);
             sceneHandlers.releaseScent?.(scentPrompt, entity);
-            sessionState.shiftCount++;
         }
         // Otherwise silently ignore
     }

@@ -1,10 +1,10 @@
-const endpoint = (import.meta.env.VITE_SONOS_URL || "http://localhost:5005").trim();
-const room = (import.meta.env.VITE_SONOS_ROOM || "Immersive Experience Room").trim();
+const endpoint = (import.meta.env.VITE_SONOS_URL || "").trim();
+const room = (import.meta.env.VITE_SONOS_ROOM || "").trim();
 
 async function sendAudio(file) {
   if (!file) return;
-  if (!endpoint) {
-    console.info("Sonos endpoint not configured; audio file:", file);
+  if (!endpoint || !room) {
+    console.info("Sonos settings not configured; audio file:", file);
     return;
   }
 
@@ -22,8 +22,7 @@ function createSonosControl() {
     play(file) {
       request = request
         .catch(() => {})
-        .then(() => sendAudio(file))
-        .catch((error) => console.error("Could not control Sonos:", error));
+        .then(() => sendAudio(file));
       return request;
     },
   };

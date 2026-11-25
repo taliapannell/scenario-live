@@ -103,13 +103,15 @@ function extractStructuredResponse(reply) {
   const scenePrompt = get('scene_prompt')
   const audioPrompt = get('audio_prompt')
   const scentPrompt = get('scent_prompt')
+  const modeRaw = get('mode').toLowerCase()
+  const mode = modeRaw === 'dream' ? 'dream' : 'conversation'
   const notesRaw    = get('notes')
   const notes = notesRaw
     .split('\n')
     .map(l => l.replace(/^[-•]\s*/, '').trim())
     .filter(Boolean)
 
-  return { spoken, entity, scenePrompt, audioPrompt, scentPrompt, notes }
+  return { spoken, entity, scenePrompt, audioPrompt, scentPrompt, mode, notes }
 }
 
 // Heuristic: a guardrail deflection either (a) redirects to the Lab or

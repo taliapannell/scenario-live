@@ -20,7 +20,7 @@
 
 import * as THREE from "three";
 import { initNovaChat, sendToNova, enableBedrock, disableBedrock, resetMessages, handleEndOfSession, setSceneShiftCallback } from "./nova-chat.js";
-import { resetSceneTimer, notifySceneShiftOccurred, onFirstKeywordDetected } from "./sceneTimer.js";
+import { resetSceneTimer, notifySceneShiftOccurred } from "./sceneTimer.js";
 import { initHoldToTalk, resetHoldToTalk } from "./hold-to-talk.js";
 import { tryEnableHoloPlay } from "./holoplay-display.js";
 import { DEFAULT_SCENE_PROMPT, DEFAULT_AUDIO_FILE, DEFAULT_SCENT_SLOT } from "./app-config.js";
@@ -30,6 +30,7 @@ import { createStreamDiffusion } from "./stream-diffusion.js";
 import { createSonosControl } from "./sonos-control.js";
 import { createScentControl } from "./scent-control.js";
 import { configureSceneHandlers } from "../shared/session-state.js";
+import { configureEnvironmentBridge } from "../shared/environment-bridge.js";
 // -----------------------------------------------------------------------------
 // STATE FLAG (kept for the future speech/Claude trigger)
 // -----------------------------------------------------------------------------
@@ -123,6 +124,19 @@ configureSceneHandlers({
   resetScene: () => streamDiffusion.triggerScene(DEFAULT_SCENE_PROMPT),
   resetAudio: () => sonosControl.play(DEFAULT_AUDIO_FILE),
   resetScent: () => scentControl.release(DEFAULT_SCENT_SLOT),
+});
+
+configureEnvironmentBridge({
+  updateStreamDiffusion: (prompt) => streamDiffusion.triggerScene(prompt),
+  updateSonos: (prompt) => {
+    const normalizedAudio = prompt?.trim().toLowerCase();
+    const file = /\.(mp3|wav)$/i.test(normalizedAudio || "")
+      ? prompt
+      : ["sustainability", "operations", "innovation", "default"].includes(normalizedAudio)
+        ? matchAudioTopic(normalizedAudio)
+        : matchAudioScene(prompt);
+    return sonosControl.play(file);
+  },
 });
 
 streamDiffusion.triggerScene(DEFAULT_SCENE_PROMPT);
@@ -760,7 +774,7 @@ initNovaChat({
     novaActive = isSpeaking;
   },
 });
-setSceneShiftCallback(onFirstKeywordDetected);
+setSceneShiftCallback(notifySceneShiftOccurred);
 
 initHoldToTalk({
   onLiveTranscript: (text) => {
