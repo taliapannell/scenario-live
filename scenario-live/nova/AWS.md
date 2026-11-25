@@ -16,7 +16,7 @@ aws --version
 3. Run: aws login
 4. When prompted, select the active session.
 5. Return to the terminal and run:
-   cd scenario-live/looking-glass
+   cd scenario-live/nova
    ./aws-credentials.sh
 
 # If you have issues authenticating, it may be related to your AWS permissions.

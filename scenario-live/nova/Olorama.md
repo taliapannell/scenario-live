@@ -5,7 +5,7 @@
   - Olorama IP: 192.168.10.28
   - Check the Mac's IP: `ipconfig getifaddr en0`
 - Olorama is plugged into Ethernet & connected to the hotspot, powered on, and has cartridges loaded.
-- `scenario-live/looking-glass/.env.local` contains:
+- `scenario-live/nova/.env.local` contains:
   `VITE_SCENT_URL=http://localhost:5011`
   (Use .env.local, not .env, because aws-credentials.sh overwrites .env.)
 - AWS credentials are current. They expire after 1 hour. To refresh, run
@@ -16,7 +16,7 @@
 Expect: "0.0% packet loss"
 
 ## Step 2 — Start the scent relay (Terminal 1, leave it running)
-    cd ~/makers-lab/scenario-live/looking-glass
+    cd ~/makers-lab/scenario-live/nova
     npm run scent-bridge
 Expect: "Scent bridge listening on http://localhost:5011/scent → UDP 192.168.10.28:5010"
 
@@ -28,7 +28,7 @@ Expect: "Scent bridge listening on http://localhost:5011/scent → UDP 192.168.1
 - Write down which physical cartridge each slot fires.
 
 ## Step 4 — Start the app (Terminal 2 or 3, leave it running)
-    cd ~/makers-lab/scenario-live/looking-glass
+    cd ~/makers-lab/scenario-live/nova
     npm run dev
 - Open the URL it prints (usually http://localhost:5173).
 - On page load, slot_6 (the Maker's Lab default) should release.
@@ -73,7 +73,7 @@ Expect: "Scent bridge listening on http://localhost:5011/scent → UDP 192.168.1
 - **The command must have no spaces:** `OUT,04,0200,1,04000,1000`. The device ignores the spaced format.
 
 ## Where things live
-- Relay and device IP: `scenario-live/looking-glass/scent-bridge.js` (line 25)
-- Scent trigger words: `scenario-live/looking-glass/sensory/scent.js` (lines 20–24)
-- Browser scent client: `scenario-live/looking-glass/scent-control.js`
+- Relay and device IP: `scenario-live/nova/scent-bridge.js` (line 25)
+- Scent trigger words: `scenario-live/nova/sensory/scent.js` (lines 20–24)
+- Browser scent client: `scenario-live/nova/scent-control.js`
 - Bridge wiring: `scenario-live/shared/session-state.js` and `main.js`

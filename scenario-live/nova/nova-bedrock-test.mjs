@@ -5,7 +5,7 @@
 // deflection.
 //
 //   1. aws sso login (or run ./aws-credentials.sh)
-//   2. cd scenario-live/looking-glass && node nova-bedrock-test.mjs
+//   2. cd scenario-live/nova && node nova-bedrock-test.mjs
 //
 // Reads VITE_AWS_* from the .env in this folder (same vars the app uses).
 // -----------------------------------------------------------------------------

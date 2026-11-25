@@ -1,5 +1,5 @@
 // =============================================================================
-// Nova — Looking Glass app : main.js
+// Nova — display app : main.js
 // -----------------------------------------------------------------------------
 // SCAFFOLD STEP 5: Full elegance redesign — "digital goddess".
 //
@@ -22,7 +22,6 @@ import * as THREE from "three";
 import { initNovaChat, sendToNova, enableBedrock, disableBedrock, resetMessages, handleEndOfSession, setSceneShiftCallback } from "./nova-chat.js";
 import { resetSceneTimer, notifySceneShiftOccurred } from "./sceneTimer.js";
 import { initHoldToTalk, resetHoldToTalk } from "./hold-to-talk.js";
-import { tryEnableHoloPlay } from "./holoplay-display.js";
 import { DEFAULT_SCENE_PROMPT, DEFAULT_AUDIO_FILE, DEFAULT_SCENT_SLOT } from "./app-config.js";
 import { matchAudioScene, matchAudioTopic } from "./audio/sonos.js";
 import { matchScentScene } from "./sensory/scent.js";
@@ -90,17 +89,6 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.25;
 document.body.appendChild(renderer.domElement);
-
-// -----------------------------------------------------------------------------
-// RENDER INDIRECTION (for the Looking Glass swap)
-// -----------------------------------------------------------------------------
-// The animation loop calls renderFrame() instead of renderer.render() directly.
-// By default it uses the standard renderer/camera above (works in any browser).
-// If a Looking Glass is detected later, we repoint renderFrame() at HoloPlay's
-// renderer — the loop itself never changes. `holoActive` lets the resize
-// handler know HoloPlay is managing its own sizing.
-let holoActive = false;
-let renderFrame = () => renderer.render(scene, camera);
 
 const streamDiffusion = createStreamDiffusion();
 const sonosControl = createSonosControl();
@@ -588,7 +576,6 @@ const pairBaseColors = pairs.map(([a, b]) => {
 // 9. RESIZE
 // =============================================================================
 window.addEventListener("resize", () => {
-  if (holoActive) return; // HoloPlay manages its own canvas sizing
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -748,7 +735,7 @@ function animate() {
   brain.rotation.y += 0.0010;
   brain.position.y = 2.55 + Math.sin(t * 0.5) * 0.06;
 
-  renderFrame(); // standard renderer, or HoloPlay's once a device is detected
+  renderer.render(scene, camera);
 }
 
 animate();
@@ -826,30 +813,4 @@ window.addEventListener("keydown", (e) => {
     resetHoldToTalk();    // return button to idle pulsing state
     console.log("[app] Demo reset to IDLE state.");
   }
-});
-
-// =============================================================================
-// 13. LOOKING GLASS OUTPUT (progressive upgrade)
-// -----------------------------------------------------------------------------
-// We start on the standard renderer (so dev/testing always works), then try to
-// upgrade to the Looking Glass asynchronously. If a device is detected, we
-// repoint renderFrame() at HoloPlay's renderer; otherwise nothing changes.
-//
-// The holographic camera needs a much narrower field of view than our 2D one
-// (the Looking Glass uses ~12.5°), so it sits far back to frame Nova. These
-// values are a starting point — expect to fine-tune them on the actual display.
-// =============================================================================
-tryEnableHoloPlay({
-  scene,
-  fallbackRenderer: renderer,
-  cameraPosition: new THREE.Vector3(0, 0.6, 16),
-  cameraTarget: new THREE.Vector3(0, 0.6, 0),
-}).then((holo) => {
-  if (!holo) {
-    console.log("Looking Glass not detected — using standard renderer.");
-    return;
-  }
-  holoActive = true;
-  renderFrame = holo.render; // the animation loop now renders to the device
-  console.log(`Looking Glass active (${holo.mode}).`);
 });
